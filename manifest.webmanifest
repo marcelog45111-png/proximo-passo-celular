@@ -1,0 +1,13 @@
+{
+  "name": "Próximo Passo",
+  "short_name": "Próximo Passo",
+  "description": "Treino e dieta, ligados ao app do computador.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "lang": "pt-BR",
+  "icons": [{ "src": "icone.png", "sizes": "256x256", "type": "image/png", "purpose": "any" }]
+}
