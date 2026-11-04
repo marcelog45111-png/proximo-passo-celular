@@ -410,16 +410,24 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId) {
     h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
   if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
   if (ex.aquecimento.length > 0) cartao.append(h('p', { class: 'ex-linha', texto: `Aquecimento: ${ex.aquecimento.map((s) => `${kg(s.carga)}×${s.reps}`).join(' · ')}` }));
-  if (ultima) cartao.append(h('p', { class: 'ex-linha', texto: `${ultima.dia ? `Última vez (${dataCurta(ultima.dia)})` : 'Anotado'}: ${textoDasSeries(ultima.series)}` }));
   cartao.append(h('p', { class: 'sugestao', 'data-tipo': sug.tipo }, sug.tipo === 'subir' ? icone('subir') : null, h('span', { texto: sug.texto })));
 
+  // Uma tabela: o cabecalho aparece uma vez, cada serie e uma linha so.
+  const tabela = h('div', { class: 'series', role: 'table', 'aria-label': `Séries de ${ex.nome}` },
+    h('div', { class: 'serie cabecalho', role: 'row' },
+      h('span', { role: 'columnheader', texto: 'Série' }),
+      h('span', { role: 'columnheader', texto: 'Anterior' }),
+      h('span', { role: 'columnheader', texto: 'kg' }),
+      h('span', { role: 'columnheader', texto: 'Reps' }),
+      h('span', { role: 'columnheader', class: 'so-leitor', texto: 'Feita' })));
   const cargaPadrao = sug.carga ?? ultima?.series.at(-1)?.carga ?? ex.referencia?.carga ?? 0;
   for (let i = 0; i < total; i += 1) {
     const chave = `${ex.id}|${i}`;
     const feita = feitas[i] && feitas[i].reps > 0 ? feitas[i] : null;
     const valor = feita ?? app.rascunho[chave] ?? { carga: cargaPadrao, reps: sug.reps[i] ?? sug.reps.at(-1) ?? faixa.min };
-    cartao.append(linhaSerie(ex, i, valor, feita !== null, sessao, treinoId));
+    tabela.append(linhaSerie(ex, i, valor, feita !== null, ultima?.series[i] ?? null, treinoId));
   }
+  cartao.append(tabela);
   cartao.append(h('div', { class: 'ex-acoes' },
     h('button', {
       class: 'botao texto', onclick: () => {
@@ -437,40 +445,37 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId) {
   return cartao;
 }
 
-function passo(rotulo, valor, delta, aoMudar, decimal) {
-  const input = h('input', { type: 'text', inputmode: decimal ? 'decimal' : 'numeric', value: String(valor).replace('.', ','), 'aria-label': rotulo });
-  const ler = () => {
+/** Campo de numero da tabela: toca, abre o teclado numerico com o valor ja selecionado. */
+function campoNumero(rotulo, valor, decimal, aoMudar) {
+  const input = h('input', {
+    class: 'campo-serie', type: 'text', inputmode: decimal ? 'decimal' : 'numeric', enterkeyhint: 'done',
+    value: String(valor).replace('.', ','), 'aria-label': rotulo, autocomplete: 'off',
+  });
+  input.addEventListener('focus', () => input.select());
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+  input.addEventListener('change', () => {
     const v = Number(input.value.replace(',', '.'));
-    return Number.isFinite(v) && v >= 0 ? v : 0;
-  };
-  const definir = (v) => {
-    const limpo = Math.max(0, Math.round(v * 10) / 10);
+    const limpo = Number.isFinite(v) && v >= 0 ? (decimal ? Math.round(v * 10) / 10 : Math.round(v)) : 0;
     input.value = String(limpo).replace('.', ',');
     aoMudar(limpo);
-  };
-  input.addEventListener('change', () => definir(ler()));
-  input.addEventListener('focus', () => input.select());
-  return h('div', { class: 'passo' },
-    h('button', { 'aria-label': `Menos ${rotulo}`, onclick: () => definir(ler() - delta(ler(), -1)) }, icone('menos')),
-    h('label', {}, input, h('small', { texto: rotulo })),
-    h('button', { 'aria-label': `Mais ${rotulo}`, onclick: () => definir(ler() + delta(ler(), 1)) }, icone('mais')));
+  });
+  return input;
 }
 
-const deltaCarga = (v, sentido) => (sentido < 0 ? (v <= 20 ? 1 : 2.5) : (v < 20 ? 1 : 2.5));
-
-function linhaSerie(ex, i, valor, feita, sessao, treinoId) {
+function linhaSerie(ex, i, valor, feita, anterior, treinoId) {
   const chave = `${ex.id}|${i}`;
   const atual = { ...valor };
-  const linha = h('div', { class: `serie${feita ? ' feita' : ''}` });
+  const linha = h('div', { class: `serie${feita ? ' feita' : ''}`, role: 'row' });
   const aoMudar = () => {
     if (linha.classList.contains('feita')) gravarSerie(ex, i, atual, treinoId);
     else app.rascunho[chave] = { ...atual };
   };
   linha.append(
-    h('span', { class: 'n', texto: String(i + 1) }),
-    passo('kg', atual.carga, deltaCarga, (v) => { atual.carga = v; aoMudar(); }, true),
-    passo('reps', atual.reps, () => 1, (v) => { atual.reps = Math.round(v); aoMudar(); }, false),
-    h('button', {
+    h('span', { class: 'n', role: 'cell', texto: String(i + 1) }),
+    h('span', { class: 'anterior', role: 'cell', texto: anterior ? `${String(anterior.carga).replace('.', ',')} × ${anterior.reps}` : '—' }),
+    h('span', { role: 'cell' }, campoNumero(`Série ${i + 1}, carga em kg`, atual.carga, true, (v) => { atual.carga = v; aoMudar(); })),
+    h('span', { role: 'cell' }, campoNumero(`Série ${i + 1}, repetições`, atual.reps, false, (v) => { atual.reps = v; aoMudar(); })),
+    h('span', { role: 'cell' }, h('button', {
       class: 'check', 'aria-label': `Série ${i + 1} feita`, 'aria-pressed': String(feita),
       onclick: () => {
         if (linha.classList.contains('feita')) {
@@ -484,7 +489,7 @@ function linhaSerie(ex, i, valor, feita, sessao, treinoId) {
         }
         desenhar();
       },
-    }, icone('check')));
+    }, icone('check'))));
   return linha;
 }
 
@@ -706,7 +711,7 @@ function abrirAjustes() {
     h('div', { class: 'cartao' },
       h('p', { class: 'pequeno', texto: 'Para usar como app: no Safari, Compartilhar → Adicionar à Tela de Início.' }),
       h('button', { class: 'botao texto perigo', style: 'margin-top:8px', onclick: sair, texto: 'Sair da conta neste iPhone' })),
-    h('p', { class: 'pequeno', style: 'text-align:center', texto: 'Próximo Passo no iPhone · versão experimental 0.2' }),
+    h('p', { class: 'pequeno', style: 'text-align:center', texto: 'Próximo Passo no iPhone · versão experimental 0.3' }),
   ]);
 }
 
