@@ -3,7 +3,7 @@
 
 import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifra.js';
 import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
-import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador } from './dados.js';
+import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
   FAIXA_PADRAO, lerPlanoTreino, lerSessao, NOMES_DOS_DIAS, novoId, sessoesDoConfig, SIGLAS_DOS_DIAS,
   sugestao, textoDasSeries, treinoDoDia, ultimaVez, volume,
@@ -88,6 +88,11 @@ function icone(nome) {
     garry: 'M12 3c4.97 0 9 3.58 9 8s-4.03 8-9 8c-1.2 0-2.35-.2-3.4-.58L4 20l1.3-3.6C3.87 15 3 13.1 3 11c0-4.42 4.03-8 9-8ZM9 10v2M15 10v2',
     ajustes: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z',
     check: 'M5 12.5l4.5 4.5L19 7.5',
+    menos: 'M6 12h12',
+    mais: 'M12 6v12M6 12h12',
+    subir: 'M12 19V5M5 12l7-7 7 7',
+    cima: 'M6 15l6-6 6 6',
+    baixo: 'M6 9l6 6 6-6',
     enviar: 'M12 19V5M5 12l7-7 7 7',
   };
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -257,12 +262,25 @@ function progressoInicial(n) {
 
 // ---------- moldura ----------
 
-function cabeca(titulo) {
-  const ponto = h('span', { class: 'ponto-sync' });
-  return h('header', { class: 'cabeca' },
-    h('h1', { class: 'titulo-grande', texto: titulo }),
-    h('button', { class: 'botao-redondo', 'aria-label': 'Ajustes e sincronização', onclick: abrirAjustes }, icone('ajustes'), ponto));
+/**
+ * Titulo grande do iOS: rola com a tela e, quando some, o nome aparece pequeno
+ * na barra fixa de cima (com o vidro do sistema por tras).
+ */
+function cabeca(titulo, subtitulo = '') {
+  const barra = h('div', { class: 'barra-nav' },
+    h('span', { class: 'titulo-nav', 'aria-hidden': 'true', texto: titulo }),
+    h('button', { class: 'botao-redondo', 'aria-label': 'Ajustes e sincronização', onclick: abrirAjustes }, icone('ajustes'), h('span', { class: 'ponto-sync' })));
+  const grande = h('h1', { class: 'titulo-grande', texto: titulo });
+  return [barra, h('header', { class: 'cabeca' }, grande, subtitulo ? h('p', { class: 'subtitulo', texto: subtitulo }) : null)];
 }
+
+/** A barra fica compacta assim que o titulo grande passa por baixo dela. */
+function acertarBarra() {
+  const barra = document.querySelector('.barra-nav');
+  const grande = document.querySelector('.titulo-grande');
+  if (barra && grande) barra.classList.toggle('compacta', grande.getBoundingClientRect().top < barra.getBoundingClientRect().bottom - 8);
+}
+window.addEventListener('scroll', acertarBarra, { passive: true });
 
 function abas() {
   const aba = (id, nome, ic) => h('button', {
@@ -283,9 +301,27 @@ function desenhar() {
     });
     return;
   }
+  const faixaAntes = document.querySelector('.dias')?.scrollLeft ?? null;
   const tela = app.aba === 'dieta' ? telaDieta() : app.aba === 'garry' ? telaGarry() : telaTreino();
   raiz.append(tela, abas());
+  centrarDia(faixaAntes);
+  acertarBarra();
   atualizarPontoSync();
+}
+
+/** O dia escolhido (no comeco, hoje) fica no meio da faixa; trocar de dia desliza ate ele. */
+function centrarDia(faixaAntes) {
+  const faixa = document.querySelector('.dias');
+  const sel = faixa?.querySelector('[aria-pressed="true"]');
+  if (!faixa || !sel) return;
+  const alvo = sel.offsetLeft - (faixa.clientWidth - sel.offsetWidth) / 2;
+  if (faixaAntes === null || !app.deslizarDia) {
+    faixa.scrollLeft = alvo;
+  } else {
+    faixa.scrollLeft = faixaAntes;
+    faixa.scrollTo({ left: alvo, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }
+  app.deslizarDia = false;
 }
 
 // ---------- treino ----------
@@ -303,11 +339,10 @@ function telaTreino() {
   const plano = planoTreino();
   const dia = hoje();
   const semanaHoje = diaDaSemana(dia);
-  if (app.diaTreino === null) {
-    app.diaTreino = treinoDoDia(plano, semanaHoje)?.diaSemana
-      ?? plano.dias.find((d) => (d.diaSemana - semanaHoje + 7) % 7 > 0)?.diaSemana ?? semanaHoje;
-  }
-  const tela = h('main', { class: 'tela' }, cabeca('Treino'), h('p', { class: 'subtitulo', texto: dataPorExtenso(dia) }));
+  // A faixa e de segunda a sabado. No domingo ela ja mostra a semana que vem.
+  if (app.diaTreino === null) app.diaTreino = semanaHoje === 0 ? 1 : semanaHoje;
+  const segunda = semanaHoje === 0 ? somarDias(dia, 1) : somarDias(dia, 1 - semanaHoje);
+  const tela = h('main', { class: 'tela' }, cabeca('Treino', dataPorExtenso(dia)));
 
   if (plano.dias.length === 0) {
     tela.append(h('div', { class: 'cartao' },
@@ -318,27 +353,42 @@ function telaTreino() {
   }
 
   tela.append(h('div', { class: 'dias', role: 'group', 'aria-label': 'Dia do treino' },
-    plano.dias.map((d) => h('button', {
-      class: 'dia', 'aria-pressed': String(d.diaSemana === app.diaTreino),
-      onclick: () => { app.diaTreino = d.diaSemana; desenhar(); },
-    }, SIGLAS_DOS_DIAS[d.diaSemana], h('b', { texto: d.nome.split(/[ ,]/)[0] }), d.diaSemana === semanaHoje ? h('span', { class: 'hoje-ponto' }) : null))));
+    [1, 2, 3, 4, 5, 6].map((ds) => {
+      const data = somarDias(segunda, ds - 1);
+      const doDia = treinoDoDia(plano, ds);
+      const ehHoje = data === dia;
+      return h('button', {
+        class: 'dia', 'aria-pressed': String(ds === app.diaTreino), 'data-hoje': ehHoje ? 'sim' : null,
+        'aria-label': `${ehHoje ? 'Hoje, ' : ''}${NOMES_DOS_DIAS[ds]} ${Number(data.slice(8))}: ${doDia?.nome ?? 'descanso'}`,
+        onclick: () => { app.diaTreino = ds; app.deslizarDia = true; desenhar(); },
+      },
+      h('span', { class: 'dia-sigla', texto: ehHoje ? 'Hoje' : SIGLAS_DOS_DIAS[ds] }),
+      h('b', { class: 'dia-num', texto: String(Number(data.slice(8))) }),
+      h('span', { class: 'dia-treino', texto: doDia ? doDia.nome.split(/[ ,]/)[0] : 'Descanso' }));
+    })));
 
   const treino = treinoDoDia(plano, app.diaTreino);
   const sessao = sessaoDe(dia);
   const sessoes = sessoesDoConfig(app.estado.config);
   if (treino === null) {
-    tela.append(h('div', { class: 'cartao' }, h('p', { texto: 'Descanso hoje.' })));
+    tela.append(h('section', { class: 'cartao vazio' },
+      h('h2', { class: 'treino-nome', texto: `${NOMES_DOS_DIAS[app.diaTreino]} é descanso` }),
+      h('p', { class: 'discreto', texto: 'Não há treino montado para este dia.' }),
+      h('button', { class: 'botao cheio', onclick: () => abrirEditor(app.diaTreino), texto: `Montar treino de ${NOMES_DOS_DIAS[app.diaTreino].toLowerCase()}` })));
+    tela.append(cartaoCardio(sessao));
     return tela;
   }
 
   const feitasHoje = treino.exercicios.flatMap((e) => (sessao.exercicios[e.id] ?? []).filter((s) => s.reps > 0));
   const completos = treino.exercicios.filter((e) => (sessao.exercicios[e.id] ?? []).filter((s) => s.reps > 0).length >= e.series).length;
-  tela.append(h('div', { class: 'resumo-treino' },
-    h('div', { class: 'numero' }, h('b', { texto: `${completos}/${treino.exercicios.length}` }), h('span', { texto: 'exercícios' })),
-    h('div', { class: 'numero' }, h('b', { texto: String(feitasHoje.length) }), h('span', { texto: 'séries' })),
-    h('div', { class: 'numero' }, h('b', { texto: n0(volume(feitasHoje)) }), h('span', { texto: 'kg de volume' }))));
-
-  tela.append(h('p', { class: 'secao', texto: treino.nome + (treino.nota ? ` · ${treino.nota}` : '') }));
+  const total = treino.exercicios.length;
+  tela.append(h('section', { class: 'treino-cabeca' },
+    h('h2', { class: 'treino-nome', texto: treino.nome }),
+    treino.nota ? h('p', { class: 'discreto', texto: treino.nota }) : null,
+    app.diaTreino !== semanaHoje ? h('p', { class: 'aviso-dia', texto: `O que você marcar aqui conta como o treino de hoje.` }) : null,
+    h('p', { class: 'treino-progresso', texto: `${completos} de ${total} exercícios · ${feitasHoje.length} séries · ${n0(volume(feitasHoje))} kg` }),
+    h('div', { class: 'progresso', role: 'progressbar', 'aria-label': 'Exercícios completos', 'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(completos) },
+      h('i', { style: `width:${total > 0 ? (completos / total) * 100 : 0}%` }))));
   for (const ex of treino.exercicios) tela.append(cartaoExercicio(ex, sessao, sessoes, dia, treino.id));
 
   tela.append(cartaoCardio(sessao));
@@ -356,12 +406,12 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId) {
   const cartao = h('section', { class: `cartao exercicio${completo ? ' completo' : ''}`, 'aria-label': ex.nome });
 
   cartao.append(h('div', { class: 'ex-topo' },
-    h('button', { class: 'ex-nome', onclick: () => abrirHistorico(ex), texto: ex.nome }),
-    h('span', { class: 'chip', texto: `${faixa.min}–${faixa.max} reps${ex.faixa ? '' : '*'}` })));
+    h('h3', { class: 'ex-nome', texto: ex.nome }),
+    h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
   if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
   if (ex.aquecimento.length > 0) cartao.append(h('p', { class: 'ex-linha', texto: `Aquecimento: ${ex.aquecimento.map((s) => `${kg(s.carga)}×${s.reps}`).join(' · ')}` }));
   if (ultima) cartao.append(h('p', { class: 'ex-linha', texto: `${ultima.dia ? `Última vez (${dataCurta(ultima.dia)})` : 'Anotado'}: ${textoDasSeries(ultima.series)}` }));
-  cartao.append(h('p', { class: 'sugestao', 'data-tipo': sug.tipo, texto: `${sug.tipo === 'subir' ? '↑ ' : ''}${sug.texto}` }));
+  cartao.append(h('p', { class: 'sugestao', 'data-tipo': sug.tipo }, sug.tipo === 'subir' ? icone('subir') : null, h('span', { texto: sug.texto })));
 
   const cargaPadrao = sug.carga ?? ultima?.series.at(-1)?.carga ?? ex.referencia?.carga ?? 0;
   for (let i = 0; i < total; i += 1) {
@@ -381,7 +431,7 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId) {
         s.treinoId = treinoId;
         gravarSessao(s);
         desenhar();
-      }, texto: '+ Série',
+      }, texto: 'Adicionar série',
     }),
     h('button', { class: 'botao texto', onclick: () => abrirHistorico(ex), texto: 'Histórico' })));
   return cartao;
@@ -401,9 +451,9 @@ function passo(rotulo, valor, delta, aoMudar, decimal) {
   input.addEventListener('change', () => definir(ler()));
   input.addEventListener('focus', () => input.select());
   return h('div', { class: 'passo' },
-    h('button', { 'aria-label': `Menos ${rotulo}`, onclick: () => definir(ler() - delta(ler(), -1)), texto: '−' }),
+    h('button', { 'aria-label': `Menos ${rotulo}`, onclick: () => definir(ler() - delta(ler(), -1)) }, icone('menos')),
     h('label', {}, input, h('small', { texto: rotulo })),
-    h('button', { 'aria-label': `Mais ${rotulo}`, onclick: () => definir(ler() + delta(ler(), 1)), texto: '+' }));
+    h('button', { 'aria-label': `Mais ${rotulo}`, onclick: () => definir(ler() + delta(ler(), 1)) }, icone('mais')));
 }
 
 const deltaCarga = (v, sentido) => (sentido < 0 ? (v <= 20 ? 1 : 2.5) : (v < 20 ? 1 : 2.5));
@@ -594,8 +644,8 @@ function abrirEditor(diaSemana) {
           h('label', {}, 'Reps mín.', min), h('label', {}, 'Reps máx.', max), h('label', {}, 'Séries', series)),
         nota,
         h('div', { class: 'ed-botoes' },
-          h('button', { class: 'botao', 'aria-label': 'Subir', onclick: () => mover(-1), texto: '↑' }),
-          h('button', { class: 'botao', 'aria-label': 'Descer', onclick: () => mover(1), texto: '↓' }),
+          h('button', { class: 'botao icone', 'aria-label': 'Subir na lista', onclick: () => mover(-1) }, icone('cima')),
+          h('button', { class: 'botao icone', 'aria-label': 'Descer na lista', onclick: () => mover(1) }, icone('baixo')),
           h('button', { class: 'botao perigo', onclick: () => { treino.exercicios.splice(i, 1); redesenhar(); }, texto: 'Tirar' })));
     }));
   }
@@ -604,7 +654,7 @@ function abrirEditor(diaSemana) {
   folha('Editar treino', [
     h('label', { class: 'rotulo', texto: 'Dia' }), qualDia,
     h('label', { class: 'rotulo', texto: 'Nome' }), nome,
-    h('p', { class: 'secao', texto: 'Exercícios' }), lista,
+    h('h2', { class: 'secao', texto: 'Exercícios' }), lista,
     h('button', { class: 'botao cheio', onclick: () => { treino.exercicios.push({ id: novoId(), nome: '', faixa: null, series: 3, nota: '', aquecimento: [], referencia: null }); redesenhar(); lista.lastElementChild?.querySelector('input')?.focus(); }, texto: '+ Exercício' }),
     plano.dias.some((d) => d.id === treino.id) ? h('button', {
       class: 'botao texto perigo', style: 'margin-top:18px', onclick: (ev) => {
@@ -656,7 +706,7 @@ function abrirAjustes() {
     h('div', { class: 'cartao' },
       h('p', { class: 'pequeno', texto: 'Para usar como app: no Safari, Compartilhar → Adicionar à Tela de Início.' }),
       h('button', { class: 'botao texto perigo', style: 'margin-top:8px', onclick: sair, texto: 'Sair da conta neste iPhone' })),
-    h('p', { class: 'pequeno', style: 'text-align:center', texto: 'Próximo Passo no iPhone · versão experimental 0.1' }),
+    h('p', { class: 'pequeno', style: 'text-align:center', texto: 'Próximo Passo no iPhone · versão experimental 0.2' }),
   ]);
 }
 
@@ -705,7 +755,7 @@ const refeicaoAberta = new Set();
 
 function telaDieta() {
   const { dia, resumo, pesoKg, pesos } = dietaDeHoje();
-  const tela = h('main', { class: 'tela' }, cabeca('Dieta'), h('p', { class: 'subtitulo', texto: dataPorExtenso(dia) }));
+  const tela = h('main', { class: 'tela' }, cabeca('Dieta', dataPorExtenso(dia)));
 
   const raio = 54;
   const volta = 2 * Math.PI * raio;
@@ -725,10 +775,10 @@ function telaDieta() {
       macro('Carboidrato', resumo.consumido.carboidrato, resumo.alvo.carboidrato, 'var(--ciano)'),
       macro('Gordura', resumo.consumido.gordura, resumo.alvo.gordura, 'var(--laranja)')))));
 
-  tela.append(h('p', { class: 'secao', texto: 'Refeições do plano' }));
+  tela.append(h('h2', { class: 'secao', texto: 'Refeições do plano' }));
   for (const r of resumo.refeicoes) {
     const aberta = refeicaoAberta.has(r.habitoId) || r.proxima;
-    const estado = r.feita ? h('span', { class: 'ref-estado feita', texto: '✓ Feita' })
+    const estado = r.feita ? h('span', { class: 'ref-estado feita' }, icone('check'), 'Feita')
       : r.pulada ? h('span', { class: 'ref-estado pulada', texto: 'Pulei' })
         : r.proxima ? h('span', { class: 'ref-estado proxima', texto: 'Próxima' })
           : h('span', { class: 'ref-kcal', texto: `${n0(r.totais.kcal)} kcal` });
@@ -761,17 +811,17 @@ function telaDieta() {
   }
 
   if (resumo.extras.length > 0) {
-    tela.append(h('p', { class: 'secao', texto: 'Fora do plano' }), h('section', { class: 'cartao' },
+    tela.append(h('h2', { class: 'secao', texto: 'Fora do plano' }), h('section', { class: 'cartao' },
       h('ul', { class: 'lista-simples' }, resumo.extras.map((x) => h('li', {}, h('span', { texto: x.descricao }), h('span', { class: 'pequeno', texto: `${n0(x.kcal)} kcal` }))))));
   }
 
-  tela.append(h('p', { class: 'secao', texto: 'Para hoje' }), h('section', { class: 'cartao' },
+  tela.append(h('h2', { class: 'secao', texto: 'Para hoje' }), h('section', { class: 'cartao' },
     h('ul', { class: 'lista-simples' }, resumo.dicas.map((d) => h('li', { texto: d })))));
 
   const pesoHoje = app.estado.pesos[dia];
   const campoPeso = h('input', { class: 'campo', inputmode: 'decimal', placeholder: pesoKg ? String(pesoKg).replace('.', ',') : 'kg', value: pesoHoje ? String(pesoHoje.valor_kg).replace('.', ',') : '', 'aria-label': 'Peso de hoje em kg' });
   const anterior = pesos.filter((p) => p.dia_logico < dia).at(-1);
-  tela.append(h('p', { class: 'secao', texto: 'Peso' }), h('section', { class: 'cartao' },
+  tela.append(h('h2', { class: 'secao', texto: 'Peso' }), h('section', { class: 'cartao' },
     h('p', { class: 'discreto', style: 'margin:0 0 10px', texto: pesoHoje ? `Hoje: ${kg(pesoHoje.valor_kg)}` : anterior ? `Último: ${kg(anterior.valor_kg)} em ${dataCurta(anterior.dia_logico)}` : 'Nenhum peso registrado ainda.' }),
     h('div', { class: 'peso-linha' }, campoPeso, h('button', {
       class: 'botao principal', onclick: () => {
