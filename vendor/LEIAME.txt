@@ -1,0 +1,4 @@
+Copias sem mexer, para o app abrir sem internet (a CSP so aceita arquivos daqui):
+- three.min.js: three.js 0.187.0 (MIT), so as pecas que a barra usa, gerado com esbuild (--bundle --minify) a partir de build/three.module.js
+- gsap.min.js + ScrollTrigger.min.js: GSAP 3.15.1 (licenca padrao GreenSock, gsap.com/standard-license)
+- ../fontes/big-shoulders-display-latin-wght-normal.woff2: Big Shoulders Display (SIL OFL 1.1), via @fontsource-variable 5.3.0

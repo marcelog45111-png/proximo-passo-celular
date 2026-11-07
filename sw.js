@@ -2,10 +2,12 @@
 // chegar sozinha; sem rede, a copia guardada. Os dados nunca passam por aqui:
 // a nuvem e a IA ficam de fora (outro endereco).
 
-const CACHE = 'pp-celular-v3';
+const CACHE = 'pp-celular-v4';
 const ARQUIVOS = [
   './', 'index.html', 'estilo.css', 'manifest.webmanifest', 'icone.png',
-  'js/app.js', 'js/cifra.js', 'js/nuvem.js', 'js/dados.js', 'js/treino.js', 'js/garry.js', 'js/gerado/nutricao.js',
+  'js/app.js', 'js/cifra.js', 'js/nuvem.js', 'js/dados.js', 'js/treino.js', 'js/garry.js', 'js/gerado/nutricao.js', 'js/movimento.js', 'js/barra3d.js',
+  'vendor/gsap.min.js', 'vendor/ScrollTrigger.min.js', 'vendor/three.min.js',
+  'fontes/big-shoulders-display-latin-wght-normal.woff2',
 ];
 
 self.addEventListener('install', (ev) => {
