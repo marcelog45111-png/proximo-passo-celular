@@ -108,14 +108,72 @@ export function pilulaDasAbas(luz, indice) {
   g().fromTo(luz, { xPercent: (de - indice) * 100 }, { xPercent: 0, duration: 0.45, ease: 'back.out(1.5)', clearProps: 'transform' });
 }
 
-/** A linha da serie se enche e o check estala. */
-export function serieFeita(linha) {
+// ---------- o treino serie a serie (09/11/2026) ----------
+// A partida e uma folha por cima da tela: nao entra no contexto do desenho (que e
+// desfeito a cada redesenho da tela de baixo). Tudo aqui e curto e se limpa sozinho.
+
+/** A partida abre: as fases entram em fila e a barra chega por ultimo. */
+export function jogoAbriu(dialogo) {
   if (!pode()) return;
-  const luz = linha.querySelector('.serie-luz');
-  const check = linha.querySelector('.check svg');
-  if (luz) g().fromTo(luz, { scaleX: 0 }, { scaleX: 1, duration: 0.42, ease: 'power3.out', clearProps: 'transform' });
-  if (check) g().fromTo(check, { scale: 0.2, rotation: -24 }, { scale: 1, rotation: 0, duration: 0.6, ease: 'elastic.out(1.2, 0.45)', clearProps: 'transform' });
-  g().fromTo(linha.querySelectorAll('.campo-serie, .n'), { y: -3 }, { y: 0, duration: 0.4, stagger: 0.03, ease: 'back.out(3)', clearProps: 'transform' });
+  g().from(dialogo.querySelectorAll('.fase-pilula'), { y: -10, autoAlpha: 0, duration: 0.4, stagger: 0.04, ease: 'back.out(2)', clearProps: 'all' });
+}
+
+/** Troca de serie: o passo novo entra do lado para onde a pessoa esta indo. */
+export function passoEntrou(corpo, direcao) {
+  if (!pode()) return;
+  // O botao que grava nao sai do lugar nem some: e nele que o polegar esta.
+  const pecas = [...corpo.children].filter((el) => !el.matches('.jogo-feito, .jogo-acoes'));
+  g().from(pecas, { x: 26 * direcao, autoAlpha: 0, duration: 0.34, stagger: 0.035, ease: 'power3.out', clearProps: 'all' });
+}
+
+/** Mais ou menos uma repeticao: o numero da um pulinho para o lado que mudou. */
+export function numeroMudou(campo, quanto) {
+  if (!pode()) return;
+  g().fromTo(campo, { y: quanto > 0 ? 7 : -7, scale: 0.94 }, { y: 0, scale: 1, duration: 0.3, ease: 'back.out(3)', overwrite: true, clearProps: 'transform' });
+}
+
+/** "Feito" sem repeticoes: o numero balanca, dizendo que falta ele. */
+export function nega(campo) {
+  campo.focus();
+  if (!pode()) return;
+  g().fromTo(campo, { x: -8 }, { x: 0, duration: 0.5, ease: 'elastic.out(1.4, 0.3)', overwrite: true, clearProps: 'transform' });
+}
+
+/** Faiscas saindo do meio: so quando a serie passou a base ou a carga foi liberada. */
+function faiscas(host, n = 14, raio = 96) {
+  for (let i = 0; i < n; i += 1) {
+    const f = document.createElement('i');
+    f.className = 'faisca';
+    host.append(f);
+    const angulo = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+    const alcance = raio * (0.55 + Math.random() * 0.6);
+    g().fromTo(f,
+      { x: 0, y: 0, scale: 1, autoAlpha: 1 },
+      { x: Math.cos(angulo) * alcance, y: Math.sin(angulo) * alcance * 0.62, scale: 0.2, autoAlpha: 0, duration: 0.7 + Math.random() * 0.35, ease: 'power3.out', onComplete: () => f.remove() });
+  }
+}
+
+/** O veredito da serie bate em cima da barra, fica um instante e sai. */
+export function carimbo(el, subiu) {
+  if (!pode()) return;
+  g().killTweensOf(el);
+  g().timeline()
+    .fromTo(el, { scale: subiu ? 1.5 : 1.12, autoAlpha: 0, y: 0 }, { scale: 1, autoAlpha: 1, duration: subiu ? 0.5 : 0.3, ease: subiu ? 'back.out(2.4)' : 'power2.out' })
+    .to(el, { autoAlpha: 0, y: -10, duration: 0.35, ease: 'power2.in', clearProps: 'all' }, 2.6);
+  if (subiu) faiscas(el);
+}
+
+/** O fim do exercicio: as series em fila e, com a carga liberada, a caixa estala. */
+export function fimEntrou(corpo, caixaLiberada) {
+  if (!pode()) return;
+  g().from(corpo.children, { y: 16, autoAlpha: 0, duration: 0.4, stagger: 0.05, ease: 'power3.out', clearProps: 'all' });
+  g().from(corpo.querySelectorAll('.fim-lista li'), { x: -14, autoAlpha: 0, duration: 0.35, stagger: 0.06, delay: 0.12, ease: 'power3.out', clearProps: 'all' });
+  if (!caixaLiberada) return;
+  const icone = caixaLiberada.querySelector('.caixa-icone');
+  g().timeline({ delay: 0.45 })
+    .fromTo(caixaLiberada, { scale: 0.9 }, { scale: 1, duration: 0.7, ease: 'elastic.out(1.1, 0.45)', clearProps: 'transform' })
+    .fromTo(icone, { rotation: -28, scale: 0.4 }, { rotation: 0, scale: 1, duration: 0.7, ease: 'elastic.out(1.2, 0.4)', clearProps: 'transform' }, 0)
+    .add(() => faiscas(icone, 18, 150), 0.05);
 }
 
 /** O cartao fechado encolhe do tamanho que tinha, e o proximo exercicio vem para a vista. */

@@ -196,7 +196,7 @@ export function criarCena() {
       barra.add(grupo);
       pedacos.push({ grupo, lado });
     }
-    return { id, material, aro, face, pedacos, distancia, cor, p: 0 };
+    return { id, material, aro, face, pedacos, distancia, cor, p: 0, f: 1 };
   }
 
   function apagarAnilhas() {
@@ -217,13 +217,29 @@ export function criarCena() {
     mistura: p === 0 ? 0 : 1,
   });
 
+  // a.f e o quanto a anilha aparece quando a partida esta num exercicio: 1 na dele, menos nas outras.
   function aplicar(a, v) {
-    a.material.opacity = v.corpo;
-    a.material.transparent = v.corpo < 0.995;
-    a.material.depthWrite = v.corpo >= 0.5;
+    const corpo = v.corpo * a.f;
+    a.material.opacity = corpo;
+    a.material.transparent = corpo < 0.995;
+    a.material.depthWrite = corpo >= 0.5;
     a.material.color.copy(COR_FANTASMA).lerp(COR_BORRACHA, v.mistura);
-    a.aro.opacity = v.aro;
-    a.face.opacity = v.face;
+    a.aro.opacity = v.aro * a.f;
+    a.face.opacity = v.face * a.f;
+  }
+
+  /** Com a partida aberta, a anilha do exercicio da vez fica acesa e as outras recuam. */
+  let focoAtual = null;
+  function focar(id) {
+    focoAtual = id;
+    const gs = g();
+    for (const a of anilhas) {
+      const alvo = id === null || a.id === id ? 1 : 0.3;
+      if (a.f === alvo) continue;
+      if (gs && !menosMovimento()) gs.to(a, { f: alvo, duration: 0.45, ease: 'power2.out', onUpdate: () => { aplicar(a, aparencia(a.p)); pedir(); } });
+      else { a.f = alvo; aplicar(a, aparencia(a.p)); }
+    }
+    pedir();
   }
 
   function impacto(a) {
@@ -274,6 +290,7 @@ export function criarCena() {
     anilhas = placas.map((pl, i) => criarAnilha(i, placas.length, pl.id));
     anilhas.forEach((a, i) => {
       a.p = placas[i].p;
+      a.f = focoAtual === null || a.id === focoAtual ? 1 : 0.3;
       aplicar(a, aparencia(a.p));
     });
     if (gs && !menosMovimento()) {
@@ -347,7 +364,8 @@ export function criarCena() {
     renderer.setSize(l, a, false);
     camera.aspect = l / a;
     // Mantem a largura da barra em qualquer tela: quem muda e o angulo vertical.
-    camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(27)) / camera.aspect));
+    // Em faixa muito baixa (a partida numa tela pequena) quem manda e a altura: as anilhas nao podem cortar.
+    camera.fov = Math.max(17.5, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(27)) / camera.aspect)));
     camera.updateProjectionMatrix();
     acertarGiro();
   }
@@ -391,6 +409,9 @@ export function criarCena() {
       chao.material.opacity = placas.length === 0 ? 0.05 : 0.08 + 0.12 * (placas.filter((pl) => pl.p === 1).length / placas.length);
       pedir();
     },
+
+    /** O exercicio da partida aberta (id), ou null quando ela fecha. */
+    foco: focar,
 
     /** Progresso da rolagem do topo, de 0 a 1. */
     rolagem(p) {

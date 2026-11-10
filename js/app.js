@@ -5,12 +5,14 @@ import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifr
 import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
-  FAIXA_PADRAO, lerPlanoTreino, lerSessao, NOMES_DOS_DIAS, novoId, sessoesDoConfig, SIGLAS_DOS_DIAS,
-  sugestao, textoDasSeries, treinoDoDia, ultimaVez, volume,
+  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, regraDaCarga,
+  resultadoDoExercicio, roteiro, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
 import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
 import { abrirChave, configDaIa, conversar } from './garry.js';
 import * as movimento from './movimento.js';
+import { h, icone, numeroBr, selo } from './dom.js';
+import { abrirJogo, jogoAberto } from './jogo.js';
 
 // ---------- guardado no aparelho ----------
 
@@ -61,7 +63,6 @@ const app = {
   sync: { estado: 'ok', mensagem: '', ultima: guardado.ler('ultima-sync') },
   conversa: guardado.ler('conversa', []),
   diaTreino: null,
-  rascunho: {},
   abertos: new Set(), // exercicios fechados que a pessoa reabriu
   efeito: null, // o que acabou de mudar e merece animar depois do proximo desenho
   descansoS: guardado.ler('descanso', 90),
@@ -70,47 +71,6 @@ const app = {
 const salvarEstado = () => guardado.gravar('estado', app.estado);
 
 // ---------- DOM ----------
-
-function h(tag, attrs = {}, ...filhos) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs ?? {})) {
-    if (v === null || v === undefined || v === false) continue;
-    if (k === 'class') el.className = v;
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else if (k === 'texto') el.textContent = v;
-    else el.setAttribute(k, v === true ? '' : String(v));
-  }
-  for (const f of filhos.flat()) if (f !== null && f !== undefined && f !== false) el.append(f instanceof Node ? f : document.createTextNode(String(f)));
-  return el;
-}
-
-function icone(nome) {
-  const caminhos = {
-    halter: 'M3 10v4M6 7v10M18 7v10M21 10v4M6 12h12',
-    prato: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
-    garry: 'M12 3c4.97 0 9 3.58 9 8s-4.03 8-9 8c-1.2 0-2.35-.2-3.4-.58L4 20l1.3-3.6C3.87 15 3 13.1 3 11c0-4.42 4.03-8 9-8ZM9 10v2M15 10v2',
-    ajustes: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z',
-    check: 'M5 12.5l4.5 4.5L19 7.5',
-    menos: 'M6 12h12',
-    mais: 'M12 6v12M6 12h12',
-    subir: 'M12 19V5M5 12l7-7 7 7',
-    cima: 'M6 15l6-6 6 6',
-    baixo: 'M6 9l6 6 6-6',
-    enviar: 'M12 19V5M5 12l7-7 7 7',
-  };
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', nome === 'ajustes' ? '1.8' : '2.2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
-  svg.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', caminhos[nome]);
-  svg.append(p);
-  return svg;
-}
 
 const raiz = document.getElementById('app');
 const n0 = (v) => Math.round(v).toLocaleString('pt-BR');
@@ -339,10 +299,6 @@ function depoisDeMontar(tela, entrou) {
   app.efeito = null;
   if (efeito === null) return;
   const cartao = efeito.ex ? tela.querySelector(`[data-ex="${CSS.escape(efeito.ex)}"]`) : null;
-  if (efeito.serie) {
-    const linha = tela.querySelector(`.serie[data-chave="${CSS.escape(efeito.serie)}"]`);
-    if (linha?.classList.contains('feita')) movimento.serieFeita(linha);
-  }
   if (cartao && efeito.fechou) movimento.cartaoFechou(cartao, efeito.altura, tela.querySelector('.exercicio.atual'));
   if (cartao && efeito.abriu) movimento.cartaoAbriu(cartao, efeito.altura);
 }
@@ -366,7 +322,7 @@ function centrarDia(faixaAntes) {
 
 const planoTreino = () => lerPlanoTreino(app.estado.config.treinoPlano ?? '{"dias":[]}');
 const chaveSessao = (dia) => `treinoSessao:${dia}`;
-const sessaoDe = (dia) => lerSessao(app.estado.config[chaveSessao(dia)] ?? null) ?? { dia, treinoId: null, exercicios: {}, cardio: null, atualizadoEm: '' };
+const sessaoDe = (dia) => lerSessao(app.estado.config[chaveSessao(dia)] ?? null) ?? { dia, treinoId: null, exercicios: {}, cardio: null, encerrados: [], atualizadoEm: '' };
 
 function gravarSessao(sessao) {
   sessao.atualizadoEm = new Date().toISOString();
@@ -425,15 +381,22 @@ function telaTreino() {
 
   const feitasDe = (e) => (sessao.exercicios[e.id] ?? []).filter((s) => s.reps > 0);
   const feitasHoje = treino.exercicios.flatMap(feitasDe);
-  const completos = treino.exercicios.filter((e) => feitasDe(e).length >= e.series).length;
+  const fechados = treino.exercicios.filter((e) => completoNaSessao(e, sessao));
+  const completos = fechados.length;
   const total = treino.exercicios.length;
-  const totalSeries = treino.exercicios.reduce((n, e) => n + e.series, 0);
+  const totalSeries = treino.exercicios.reduce((n, e) => n + roteiro(e, (sessao.exercicios[e.id] ?? []).length).length, 0);
   const fracao = total > 0 ? completos / total : 0;
   const fechado = total > 0 && completos === total;
-  dadosDaBarra = {
-    chave: `${treino.id}|${dia}`,
-    placas: treino.exercicios.map((e) => ({ id: e.id, p: Math.min(1, feitasDe(e).length / Math.max(e.series, 1)) })),
-  };
+  dadosDaBarra = dadosDaBarraDe(treino, sessao, dia);
+
+  // O placar do dia: cada exercicio fechado contra a ultima vez dele.
+  const resultados = fechados.map((e) => resultadoDoExercicio(e, sessao.exercicios[e.id], ultimaVez(e, sessoes, dia))).filter((r) => r !== null);
+  const marca = (tipo, ic, n, um, varios) => (n === 0 ? null : h('span', { class: 'placar-item', 'data-tipo': tipo }, icone(ic), h('b', { texto: String(n) }), n === 1 ? um : varios));
+  const placar = resultados.length === 0 ? null : h('div', { class: 'placar', role: 'group', 'aria-label': 'Exercícios de hoje contra a última vez' },
+    marca('reps', 'subir', resultados.filter((r) => r.tipo === 'carga' || r.tipo === 'reps').length, 'acima', 'acima'),
+    marca('igual', 'igual', resultados.filter((r) => r.tipo === 'igual').length, 'igual', 'iguais'),
+    marca('abaixo', 'descer', resultados.filter((r) => r.tipo === 'abaixo').length, 'abaixo', 'abaixo'),
+    marca('liberada', 'liberada', resultados.filter((r) => r.liberou !== null).length, 'carga liberada', 'cargas liberadas'));
 
   const contador = (chave, valor, resto, rotulo) => {
     const b = h('span', { 'data-contar': chave, 'data-valor': String(valor) });
@@ -453,10 +416,11 @@ function telaTreino() {
         contador('volume', Math.round(volume(feitasHoje)), ' kg', 'volume hoje')),
       h('div', { class: 'progresso', role: 'progressbar', 'aria-label': 'Exercícios completos', 'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(completos) },
         h('i', { style: `width:${fracao * 100}%` })),
+      placar,
       app.diaTreino !== semanaHoje ? h('p', { class: 'aviso-dia', texto: 'O que você marcar aqui conta como o treino de hoje.' }) : null));
 
   // O exercicio da vez e o primeiro que falta.
-  const atual = treino.exercicios.find((e) => feitasDe(e).length < e.series)?.id ?? null;
+  const atual = treino.exercicios.find((e) => !completoNaSessao(e, sessao))?.id ?? null;
   treino.exercicios.forEach((ex, i) => tela.append(cartaoExercicio(ex, sessao, sessoes, dia, treino.id, i, ex.id === atual)));
 
   tela.append(cartaoCardio(sessao));
@@ -471,8 +435,20 @@ let cenaDaBarra = null;
 let cenaCarregando = false;
 let cenaFalhou = false;
 
+/** Cada exercicio e uma anilha: ganha corpo a cada serie e so encaixa quando o exercicio fecha. */
+function dadosDaBarraDe(treino, sessao, dia) {
+  return {
+    chave: `${treino.id}|${dia}`,
+    placas: treino.exercicios.map((e) => ({
+      id: e.id,
+      p: completoNaSessao(e, sessao) ? 1 : Math.min(0.95, (sessao.exercicios[e.id] ?? []).filter((s) => s.reps > 0).length / roteiro(e).length),
+    })),
+  };
+}
+
 function aplicarCena() {
-  const host = document.querySelector('.palco-cena');
+  // Com a partida aberta, a barra fica nela; ao fechar, volta para o topo do treino.
+  const host = jogoAberto()?.cenaHost ?? document.querySelector('.palco-cena');
   if (!host || !cenaDaBarra || dadosDaBarra === null) return;
   cenaDaBarra.montarEm(host);
   cenaDaBarra.mostrar(dadosDaBarra);
@@ -495,22 +471,33 @@ function ligarPalco(tela) {
   movimento.rolagemDoPalco(palco, (p) => cenaDaBarra?.rolagem(p));
 }
 
+const quandoFoi = (ultima) => (ultima === null ? null : ultima.dia === null ? 'anotado' : dataCurta(ultima.dia));
+const rotuloDoExtra = (ex) => (ex.metodo === 'myo' ? 'Adicionar mini' : ex.metodo === 'restpause' ? 'Adicionar pausa' : ex.metodo === 'drop' ? 'Adicionar drop' : 'Adicionar série');
+
+/**
+ * O cartao mostra o exercicio inteiro antes de comecar: cada serie com a base (a
+ * ultima vez) e a meta de hoje. Tocar em "Comecar" ou numa serie abre a partida,
+ * uma serie por tela (jogo.js). Depois de feita, a serie mostra o que foi feito e a
+ * marca contra a base: subiu a carga, subiu as repeticoes, igual ou abaixo.
+ */
 function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
   const ultima = ultimaVez(ex, sessoes, dia);
-  const sug = sugestao(ex, ultima);
-  const faixa = ex.faixa ?? FAIXA_PADRAO;
-  const feitas = sessao.exercicios[ex.id] ?? [];
-  const total = Math.max(ex.series, feitas.length);
-  const completo = feitas.filter((s) => s.reps > 0).length >= ex.series;
+  const lista = sessao.exercicios[ex.id] ?? [];
+  const plano = planoDeHoje(ex, ultima, lista.length);
+  const faixa = plano.faixa;
+  const validas = lista.filter((s) => s.reps > 0);
+  const completo = completoNaSessao(ex, sessao);
+  const metodo = METODOS[ex.metodo] ?? null;
   const cartao = h('section', { class: `cartao exercicio${completo ? ' completo' : ''}${atual ? ' atual' : ''}`, 'aria-label': ex.nome, 'data-ex': ex.id });
 
-  // Exercicio fechado vira uma linha so; tocar abre de novo para corrigir.
+  // Exercicio fechado vira uma linha so, com o resultado contra a ultima vez; tocar abre de novo.
   if (completo && !app.abertos.has(ex.id)) {
-    const validas = feitas.filter((s) => s.reps > 0);
-    const maior = validas.reduce((m, s) => Math.max(m, s.carga), 0);
+    const r = resultadoDoExercicio(ex, lista, ultima);
+    const maior = validas.filter((s) => !s.t).reduce((m, s) => Math.max(m, s.carga), 0);
     cartao.classList.add('fechado');
     cartao.append(h('button', {
-      class: 'ex-resumo', 'aria-label': `${ex.nome}: feito. Abrir para corrigir`,
+      class: 'ex-resumo',
+      'aria-label': `${ex.nome}: feito${r && r.tipo !== 'nova' ? `, ${r.tipo === 'igual' ? 'igual à última vez' : `${r.texto} contra a última vez`}` : ''}${r?.liberou != null ? `, carga liberada para o próximo treino: ${kg(r.liberou)}` : ''}. Abrir para corrigir`,
       onclick: () => {
         app.efeito = { ex: ex.id, abriu: true, altura: cartao.offsetHeight };
         app.abertos.add(ex.id);
@@ -518,8 +505,12 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
       },
     },
     h('span', { class: 'ex-selo' }, icone('check')),
-    h('span', { class: 'ex-resumo-nome', texto: ex.nome }),
-    h('span', { class: 'ex-resumo-numeros', texto: `${validas.length} × ${String(maior).replace('.', ',')} kg` })));
+    h('span', { class: 'ex-resumo-texto' },
+      h('span', { class: 'ex-resumo-nome', texto: ex.nome }),
+      r?.liberou != null ? h('span', { class: 'ex-resumo-proximo' }, icone('liberada'), `Próximo treino: ${kg(r.liberou)}`) : null),
+    h('span', { class: 'ex-resumo-lado' },
+      h('span', { class: 'ex-resumo-numeros', texto: `${validas.length} × ${numeroBr(maior)} kg` }),
+      selo(r))));
     return cartao;
   }
 
@@ -527,105 +518,126 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     h('span', { class: 'ex-num', 'aria-hidden': 'true', texto: String(indice + 1).padStart(2, '0') }),
     h('h3', { class: 'ex-nome', texto: ex.nome }),
     h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
+  if (metodo) cartao.append(h('p', { class: 'ex-metodo' }, h('b', { texto: metodo.nome }), ` ${metodo.resumo}`));
   if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
   if (ex.aquecimento.length > 0) cartao.append(h('p', { class: 'ex-linha', texto: `Aquecimento: ${ex.aquecimento.map((s) => `${kg(s.carga)}×${s.reps}`).join(' · ')}` }));
-  cartao.append(h('p', { class: 'sugestao', 'data-tipo': sug.tipo }, sug.tipo === 'subir' ? icone('subir') : null, h('span', { texto: sug.texto })));
+  cartao.append(h('p', { class: 'sugestao', 'data-tipo': plano.tipo }, plano.tipo === 'subir' ? icone('liberada') : null, h('span', { texto: plano.tipo === 'subir' ? `Carga liberada. ${plano.texto}` : plano.texto })));
 
-  // Uma tabela: o cabecalho aparece uma vez, cada serie e uma linha so.
-  const tabela = h('div', { class: 'series', role: 'table', 'aria-label': `Séries de ${ex.nome}` },
-    h('div', { class: 'serie cabecalho', role: 'row' },
-      h('span', { role: 'columnheader', texto: 'Série' }),
-      h('span', { role: 'columnheader', texto: 'Anterior' }),
-      h('span', { role: 'columnheader', texto: 'kg' }),
-      h('span', { role: 'columnheader', texto: 'Reps' }),
-      h('span', { role: 'columnheader', class: 'so-leitor', texto: 'Feita' })));
-  const cargaPadrao = sug.carga ?? ultima?.series.at(-1)?.carga ?? ex.referencia?.carga ?? 0;
-  for (let i = 0; i < total; i += 1) {
-    const chave = `${ex.id}|${i}`;
-    const feita = feitas[i] && feitas[i].reps > 0 ? feitas[i] : null;
-    const valor = feita ?? app.rascunho[chave] ?? { carga: cargaPadrao, reps: sug.reps[i] ?? sug.reps.at(-1) ?? faixa.min };
-    tabela.append(linhaSerie(ex, i, valor, feita !== null, ultima?.series[i] ?? null, treinoId, cartao));
+  // Todas as series de uma vez: Serie | Base | Hoje (a meta, ou o que foi feito) | marca.
+  const series = h('div', { class: 'series', role: 'group', 'aria-label': `Séries de ${ex.nome}` },
+    h('div', { class: 'serie cabecalho', 'aria-hidden': 'true' },
+      h('span', { texto: 'Série' }), h('span', { texto: 'Base' }), h('span', { texto: 'Hoje' }), h('span')));
+  plano.passos.forEach((passo, i) => {
+    const f = lista[i] && lista[i].reps > 0 ? lista[i] : null;
+    const v = f ? veredito(f, passo.base) : null;
+    const base = passo.base ? `${numeroBr(passo.base.carga)} × ${passo.base.reps}` : '—';
+    const alvo = `${numeroBr(passo.alvo.carga)} × ${passo.alvo.reps}`;
+    series.append(h('button', {
+      class: `serie${f ? ' feita' : ''}`, 'data-chave': `${ex.id}|${i}`,
+      'aria-label': f
+        ? `${passo.rotulo}: feito ${kg(f.carga)} vezes ${f.reps}, ${v.tipo === 'nova' ? 'base registrada' : v.tipo === 'igual' ? 'igual à base' : v.texto}. Corrigir`
+        : `${passo.rotulo}: base ${passo.base ? `${kg(passo.base.carga)} vezes ${passo.base.reps}` : 'ainda não tem'}, meta ${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}. Fazer agora`,
+      onclick: () => jogar(ex.id, i),
+    },
+    f ? h('i', { class: 'serie-luz', 'aria-hidden': 'true' }) : null,
+    h('span', { class: 'n', texto: passo.curto }),
+    h('span', { class: 'anterior', texto: base }),
+    f ? h('span', { class: 'hoje', texto: `${numeroBr(f.carga)} × ${f.reps}` }) : h('span', { class: 'meta', texto: alvo }),
+    f ? selo(v) : h('span', { class: 'selo vazio' }, h('span', { texto: 'meta' }))));
+  });
+  cartao.append(series);
+
+  const falta = plano.passos.findIndex((_, i) => !(lista[i] && lista[i].reps > 0));
+  if (falta !== -1 && !(completo && validas.length >= roteiro(ex).length)) {
+    cartao.append(h('button', { class: `botao cheio comecar${atual ? ' principal' : ''}`, onclick: () => jogar(ex.id, null) },
+      icone('comecar'), validas.length === 0 ? 'Começar' : `Continuar: ${plano.passos[falta].rotulo}`));
   }
-  cartao.append(tabela);
   cartao.append(h('div', { class: 'ex-acoes' },
-    h('button', {
-      class: 'botao texto', onclick: () => {
-        const s = sessaoDe(dia);
-        const lista = s.exercicios[ex.id] ?? [];
-        while (lista.length < total) lista.push({ carga: 0, reps: 0 });
-        lista.push({ carga: 0, reps: 0 });
-        s.exercicios[ex.id] = lista;
-        s.treinoId = treinoId;
-        gravarSessao(s);
-        desenhar();
-      }, texto: 'Adicionar série',
-    }),
+    h('button', { class: 'botao texto', onclick: () => { adicionarSerie(ex, treinoId); desenhar(); }, texto: rotuloDoExtra(ex) }),
+    completo ? h('button', { class: 'botao texto', onclick: () => { app.abertos.delete(ex.id); desenhar(); }, texto: 'Recolher' }) : null,
     h('button', { class: 'botao texto', onclick: () => abrirHistorico(ex), texto: 'Histórico' })));
   return cartao;
 }
 
-/** Campo de numero da tabela: toca, abre o teclado numerico com o valor ja selecionado. */
-function campoNumero(rotulo, valor, decimal, aoMudar) {
-  const input = h('input', {
-    class: 'campo-serie', type: 'text', inputmode: decimal ? 'decimal' : 'numeric', enterkeyhint: 'done',
-    value: String(valor).replace('.', ','), 'aria-label': rotulo, autocomplete: 'off',
-  });
-  input.addEventListener('focus', () => input.select());
-  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
-  input.addEventListener('change', () => {
-    const v = Number(input.value.replace(',', '.'));
-    const limpo = Number.isFinite(v) && v >= 0 ? (decimal ? Math.round(v * 10) / 10 : Math.round(v)) : 0;
-    input.value = String(limpo).replace('.', ',');
-    aoMudar(limpo);
-  });
-  return input;
+/** Tudo que a partida precisa para andar sozinha: ler e gravar o dia, o descanso e a barra. */
+function partidaDe(exId, comecarEm) {
+  const treino = treinoDoDia(planoTreino(), app.diaTreino);
+  const indice = treino?.exercicios.findIndex((e) => e.id === exId) ?? -1;
+  if (indice === -1) return null;
+  const ex = treino.exercicios[indice];
+  const ultima = ultimaVez(ex, sessoesDoConfig(app.estado.config), hoje());
+  const listaDe = () => sessaoDe(hoje()).exercicios[ex.id] ?? [];
+  return {
+    ex, indice, ultima, quando: quandoFoi(ultima), comecarEm,
+    feitas: listaDe,
+    encerrado: () => sessaoDe(hoje()).encerrados.includes(ex.id),
+    gravar: (i, valor) => gravarSerie(ex, i, valor, treino.id),
+    desmarcar: (i) => gravarSerie(ex, i, { carga: listaDe()[i]?.carga ?? 0, reps: 0 }, treino.id),
+    encerrar: () => marcarEncerrado(ex.id, true),
+    reabrir: () => marcarEncerrado(ex.id, false),
+    adicionar: () => adicionarSerie(ex, treino.id),
+    descansar: (segundos) => comecarDescanso(segundos ?? app.descansoS),
+    pararDescanso,
+    cena: {
+      montar: (host) => cenaDaBarra?.montarEm(host),
+      atualizar: () => {
+        dadosDaBarra = dadosDaBarraDe(treino, sessaoDe(hoje()), hoje());
+        cenaDaBarra?.mostrar(dadosDaBarra);
+      },
+      foco: (id) => cenaDaBarra?.foco(id),
+    },
+    proximo: () => {
+      const s = sessaoDe(hoje());
+      const falta = [...treino.exercicios.slice(indice + 1), ...treino.exercicios.slice(0, indice)].find((e) => !completoNaSessao(e, s));
+      return falta ? partidaDe(falta.id, null) : null;
+    },
+  };
 }
 
-function linhaSerie(ex, i, valor, feita, anterior, treinoId, cartao) {
-  const chave = `${ex.id}|${i}`;
-  const atual = { ...valor };
-  const linha = h('div', { class: `serie${feita ? ' feita' : ''}`, role: 'row', 'data-chave': chave });
-  const aoMudar = () => {
-    if (linha.classList.contains('feita')) gravarSerie(ex, i, atual, treinoId);
-    else app.rascunho[chave] = { ...atual };
-  };
-  if (feita) linha.append(h('i', { class: 'serie-luz', 'aria-hidden': 'true' }));
-  linha.append(
-    h('span', { class: 'n', role: 'cell', texto: String(i + 1) }),
-    h('span', { class: 'anterior', role: 'cell', texto: anterior ? `${String(anterior.carga).replace('.', ',')} × ${anterior.reps}` : '—' }),
-    h('span', { role: 'cell' }, campoNumero(`Série ${i + 1}, carga em kg`, atual.carga, true, (v) => { atual.carga = v; aoMudar(); })),
-    h('span', { role: 'cell' }, campoNumero(`Série ${i + 1}, repetições`, atual.reps, false, (v) => { atual.reps = v; aoMudar(); })),
-    h('span', { role: 'cell' }, h('button', {
-      class: 'check', 'aria-label': `Série ${i + 1} feita`, 'aria-pressed': String(feita),
-      onclick: () => {
-        if (linha.classList.contains('feita')) {
-          gravarSerie(ex, i, { carga: atual.carga, reps: 0 }, treinoId);
-          app.rascunho[chave] = { ...atual };
-        } else {
-          if (atual.reps <= 0) return;
-          gravarSerie(ex, i, atual, treinoId);
-          delete app.rascunho[chave];
-          comecarDescanso();
-          const agora = (sessaoDe(hoje()).exercicios[ex.id] ?? []).filter((s) => s.reps > 0).length;
-          const fechou = agora >= ex.series;
-          if (fechou) app.abertos.delete(ex.id);
-          app.efeito = { serie: chave, ex: ex.id, fechou, altura: cartao.offsetHeight };
-        }
-        desenhar();
-      },
-    }, icone('check'))));
-  return linha;
+function jogar(exId, passo) {
+  const partida = partidaDe(exId, passo);
+  if (partida === null) return;
+  abrirJogo(partida, ({ mudou, ex }) => {
+    if (descanso) document.body.append(descanso.el);
+    if (mudou && completoNaSessao(ex, sessaoDe(hoje()))) app.abertos.delete(ex.id);
+    desenhar();
+    if (mudou) {
+      document.querySelector('.exercicio.atual')?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+  });
 }
 
 function gravarSerie(ex, i, valor, treinoId) {
   const s = sessaoDe(hoje());
   const lista = s.exercicios[ex.id] ?? [];
   while (lista.length <= i) lista.push({ carga: 0, reps: 0 });
-  lista[i] = { carga: valor.carga, reps: valor.reps };
-  // series vazias no fim nao precisam ficar guardadas
-  while (lista.length > ex.series && lista.at(-1).reps === 0) lista.pop();
+  const t = roteiro(ex, i + 1)[i].t;
+  lista[i] = { carga: valor.carga, reps: valor.reps, ...(t ? { t } : {}) };
+  // series vazias no fim, alem do roteiro, nao precisam ficar guardadas
+  const minimo = roteiro(ex).length;
+  while (lista.length > minimo && lista.at(-1).reps === 0) lista.pop();
   s.exercicios[ex.id] = lista;
   s.treinoId = treinoId;
+  gravarSessao(s);
+}
+
+/** Um passo a mais no fim do roteiro (serie, mini, pausa ou drop). Devolve a posicao dele. */
+function adicionarSerie(ex, treinoId) {
+  const s = sessaoDe(hoje());
+  const lista = s.exercicios[ex.id] ?? [];
+  const minimo = roteiro(ex).length;
+  while (lista.length < minimo) lista.push({ carga: 0, reps: 0 });
+  lista.push({ carga: 0, reps: 0 });
+  s.exercicios[ex.id] = lista;
+  s.treinoId = treinoId;
+  gravarSessao(s);
+  return lista.length - 1;
+}
+
+function marcarEncerrado(exId, sim) {
+  const s = sessaoDe(hoje());
+  s.encerrados = s.encerrados.filter((id) => id !== exId);
+  if (sim) s.encerrados.push(exId);
   gravarSessao(s);
 }
 
@@ -655,9 +667,9 @@ function cartaoCardio(sessao) {
 // descanso entre as series
 
 let descanso = null;
-function comecarDescanso() {
+function comecarDescanso(segundos = app.descansoS) {
   pararDescanso();
-  const fim = Date.now() + app.descansoS * 1000;
+  const fim = Date.now() + segundos * 1000;
   const el = h('div', { class: 'descanso', role: 'timer', 'aria-live': 'off' });
   const tempo = h('b');
   const barra = h('i', { class: 'descanso-barra', 'aria-hidden': 'true' });
@@ -665,7 +677,7 @@ function comecarDescanso() {
     h('button', { class: 'botao', onclick: () => { descansoFim += 30_000; descansoTotal += 30_000; }, texto: '+30s' }),
     h('button', { class: 'botao', onclick: pararDescanso, texto: 'Pular' }), barra);
   let descansoFim = fim;
-  let descansoTotal = app.descansoS * 1000;
+  let descansoTotal = segundos * 1000;
   const tique = () => {
     const resta = Math.ceil((descansoFim - Date.now()) / 1000);
     barra.style.transform = `scaleX(${Math.max(0, (descansoFim - Date.now()) / descansoTotal)})`;
@@ -680,7 +692,8 @@ function comecarDescanso() {
     }
     tempo.textContent = `${Math.floor(resta / 60)}:${String(resta % 60).padStart(2, '0')}`;
   };
-  document.body.append(el);
+  // Com a partida aberta, o descanso conta dentro dela; fechou, desce para a pilula de baixo.
+  (jogoAberto()?.descansoHost ?? document.body).append(el);
   descanso = { el, relogio: setInterval(tique, 250) };
   tique();
 }
@@ -734,7 +747,12 @@ function abrirHistorico(ex) {
     melhor ? h('div', { class: 'cartao' }, h('p', { class: 'pequeno', texto: 'Melhor série' }), h('p', { class: 'ex-nome', texto: `${kg(melhor.carga)} × ${melhor.reps}` })) : null,
     linhas.length === 0
       ? h('p', { class: 'discreto', texto: ex.referencia ? `Ainda sem treino registrado aqui. Anotado: ${textoDasSeries(ex.referencia.reps.map((reps) => ({ carga: ex.referencia.carga, reps })))}` : 'Ainda sem treino registrado.' })
-      : h('div', { class: 'cartao' }, h('ul', { class: 'lista-simples' }, linhas.map((l) => h('li', {}, h('span', { texto: dataCurta(l.dia) }), h('span', { texto: textoDasSeries(l.series) }), h('span', { class: 'pequeno', texto: `${n0(volume(l.series))} kg` }))))),
+      : h('div', { class: 'cartao' }, h('ul', { class: 'lista-simples historico' }, linhas.map((l, i) => {
+        // contra o treino anterior do mesmo exercicio: subiu a carga, as repeticoes, igual ou abaixo
+        const antes = linhas[i + 1] ?? null;
+        const r = antes ? resultadoDoExercicio(ex, l.series, antes) : null;
+        return h('li', {}, h('span', { texto: dataCurta(l.dia) }), h('span', { texto: textoDasSeries(l.series) }), selo(r) ?? h('span', { class: 'pequeno', texto: 'primeiro' }));
+      }))),
   ]);
 }
 
@@ -757,23 +775,43 @@ function abrirEditor(diaSemana) {
   function redesenhar() {
     lista.replaceChildren(...treino.exercicios.map((ex, i) => {
       const campoNome = h('input', { class: 'campo', value: ex.nome, placeholder: 'Exercício', 'aria-label': 'Nome do exercício' });
-      const min = h('input', { class: 'campo', inputmode: 'numeric', value: ex.faixa?.min ?? '', placeholder: String(FAIXA_PADRAO.min) });
-      const max = h('input', { class: 'campo', inputmode: 'numeric', value: ex.faixa?.max ?? '', placeholder: String(FAIXA_PADRAO.max) });
+      const min = h('input', { class: 'campo', inputmode: 'numeric', value: ex.faixa?.min ?? '', placeholder: String((METODOS[ex.metodo]?.faixa ?? FAIXA_PADRAO).min) });
+      const max = h('input', { class: 'campo', inputmode: 'numeric', value: ex.faixa?.max ?? '', placeholder: String((METODOS[ex.metodo]?.faixa ?? FAIXA_PADRAO).max) });
       const series = h('input', { class: 'campo', inputmode: 'numeric', value: ex.series });
       const nota = h('input', { class: 'campo', value: ex.nota, placeholder: 'Nota (ex.: volta lenta)' });
+      // O metodo e opcional e vale so para este exercicio: muda o roteiro, o descanso e a regra da carga.
+      const metodo = h('select', { class: 'campo', 'aria-label': 'Método de treino' },
+        h('option', { value: '', selected: ex.metodo ? null : true, texto: 'Séries normais' }),
+        Object.entries(METODOS).map(([id, m]) => h('option', { value: id, selected: ex.metodo === id ? true : null, texto: m.nome })));
+      const drops = h('input', { class: 'campo', inputmode: 'numeric', value: ex.drops || METODOS.drop.drops });
+      metodo.addEventListener('change', () => {
+        ler();
+        ex.metodo = metodo.value || null;
+        if (METODOS[ex.metodo]?.series) ex.series = METODOS[ex.metodo].series;
+        ex.drops = ex.metodo === 'drop' ? METODOS.drop.drops : 0;
+        redesenhar();
+      });
+      const regra = () => { const lido = lerPlanoTreino({ dias: [{ id: 'x', diaSemana: 1, exercicios: [{ ...ex, nome: ex.nome || 'x' }] }] }).dias[0].exercicios[0]; return `${METODOS[ex.metodo]?.resumo ?? 'Uma série de cada vez, com o descanso dos Ajustes.'} A carga sobe com ${regraDaCarga(lido)}.`; };
+      const explica = h('p', { class: 'ed-explica' });
       const ler = () => {
         ex.nome = campoNome.value.trim();
         const a = numeroOuNulo(min.value);
         const b = numeroOuNulo(max.value);
         ex.faixa = a !== null && b !== null && b >= a ? { min: a, max: b } : null;
         ex.series = Math.max(1, Math.min(10, Math.round(numeroOuNulo(series.value) ?? 3)));
+        if (ex.metodo === 'drop') ex.drops = Math.max(1, Math.min(4, Math.round(numeroOuNulo(drops.value) ?? METODOS.drop.drops)));
         ex.nota = nota.value.trim();
+        explica.textContent = regra();
       };
-      for (const c of [campoNome, min, max, series, nota]) c.addEventListener('input', ler);
+      for (const c of [campoNome, min, max, series, drops, nota]) c.addEventListener('input', ler);
+      explica.textContent = regra();
       const mover = (d) => { const j = i + d; if (j < 0 || j >= treino.exercicios.length) return; [treino.exercicios[i], treino.exercicios[j]] = [treino.exercicios[j], treino.exercicios[i]]; redesenhar(); };
       return h('div', { class: 'ed-ex' }, campoNome,
         h('div', { class: 'ed-linha' },
-          h('label', {}, 'Reps mín.', min), h('label', {}, 'Reps máx.', max), h('label', {}, 'Séries', series)),
+          h('label', {}, 'Reps mín.', min), h('label', {}, 'Reps máx.', max), h('label', {}, METODOS[ex.metodo]?.rotulo ?? 'Séries', series)),
+        h('div', { class: `ed-linha ed-metodo${ex.metodo === 'drop' ? ' com-drops' : ''}` },
+          h('label', {}, 'Método', metodo), ex.metodo === 'drop' ? h('label', {}, 'Drops', drops) : null),
+        explica,
         nota,
         h('div', { class: 'ed-botoes' },
           h('button', { class: 'botao icone', 'aria-label': 'Subir na lista', onclick: () => mover(-1) }, icone('cima')),
@@ -787,7 +825,7 @@ function abrirEditor(diaSemana) {
     h('label', { class: 'rotulo', texto: 'Dia' }), qualDia,
     h('label', { class: 'rotulo', texto: 'Nome' }), nome,
     h('h2', { class: 'secao', texto: 'Exercícios' }), lista,
-    h('button', { class: 'botao cheio', onclick: () => { treino.exercicios.push({ id: novoId(), nome: '', faixa: null, series: 3, nota: '', aquecimento: [], referencia: null }); redesenhar(); lista.lastElementChild?.querySelector('input')?.focus(); }, texto: '+ Exercício' }),
+    h('button', { class: 'botao cheio', onclick: () => { treino.exercicios.push({ id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, nota: '', aquecimento: [], referencia: null }); redesenhar(); lista.lastElementChild?.querySelector('input')?.focus(); }, texto: '+ Exercício' }),
     plano.dias.some((d) => d.id === treino.id) ? h('button', {
       class: 'botao texto perigo', style: 'margin-top:18px', onclick: (ev) => {
         if (ev.currentTarget.dataset.certeza !== 'sim') { ev.currentTarget.dataset.certeza = 'sim'; ev.currentTarget.textContent = 'Tocar de novo para apagar o dia'; return; }
@@ -838,7 +876,7 @@ function abrirAjustes() {
     h('div', { class: 'cartao' },
       h('p', { class: 'pequeno', texto: 'Para usar como app: no Safari, Compartilhar → Adicionar à Tela de Início.' }),
       h('button', { class: 'botao texto perigo', style: 'margin-top:8px', onclick: sair, texto: 'Sair da conta neste iPhone' })),
-    h('p', { class: 'pequeno', style: 'text-align:center', texto: 'Próximo Passo no iPhone · versão experimental 0.4' }),
+    h('p', { class: 'pequeno', style: 'text-align:center', texto: 'Próximo Passo no iPhone · versão experimental 0.5' }),
   ]);
 }
 
@@ -999,7 +1037,9 @@ function contextoDoGarry() {
       exercicios: treino.exercicios.map((ex) => {
         const u = ultimaVez(ex, sessoes, dia);
         return {
-          nome: ex.nome, faixa: ex.faixa ?? `${FAIXA_PADRAO.min}-${FAIXA_PADRAO.max} (padrão)`, series: ex.series, nota: ex.nota || undefined,
+          nome: ex.nome, faixa: ex.faixa ?? `${faixaDe(ex).min}-${faixaDe(ex).max} (padrão)`, series: ex.series, nota: ex.nota || undefined,
+          metodo: METODOS[ex.metodo] ? `${METODOS[ex.metodo].nome}: ${roteiro(ex).map((p) => p.rotulo).join(', ')}` : undefined,
+          regraDaCarga: `sobe com ${regraDaCarga(ex)}`,
           ultimaVez: u ? `${u.dia ?? 'anotado'}: ${textoDasSeries(u.series)}` : null,
           sugestao: sugestao(ex, u).texto,
           feitoHoje: textoDasSeries((sessao.exercicios[ex.id] ?? []).filter((s) => s.reps > 0)) || null,

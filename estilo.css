@@ -85,7 +85,7 @@ body {
 h1, h2, h3 { text-wrap: balance; }
 p { text-wrap: pretty; }
 button, input, select, textarea { font: inherit; color: inherit; }
-button { cursor: pointer; border: 0; background: none; padding: 0; transition: transform 0.12s var(--facil), opacity 0.12s, background-color 0.2s; touch-action: manipulation; }
+button { cursor: pointer; border: 0; background: none; padding: 0; transition: transform 0.12s var(--facil), opacity 0.12s, background-color 0.2s; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
 button:active { transform: scale(0.96); opacity: 0.86; }
 button:disabled { opacity: 0.4; }
 :focus-visible { outline: 2px solid var(--ciano); outline-offset: 2px; border-radius: 6px; }
@@ -260,6 +260,18 @@ label.rotulo { display: block; font-size: 0.76rem; color: var(--texto-2); margin
 .palco .progresso { background: rgba(226, 240, 233, 0.12); }
 .palco[data-fechado="sim"] .titulo-grande { background: linear-gradient(115deg, #39e27a, #5bd4e4); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .aviso-dia { position: relative; z-index: 1; font-size: 0.8rem; color: #ffb340; margin: 10px 0 0; }
+/* O placar do dia: quantos exercicios ficaram acima, iguais ou abaixo da ultima vez. */
+.placar { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+.placar-item {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px 4px 7px; border-radius: 10px;
+  font-size: 0.76rem; font-weight: 600; color: var(--palco-texto-2); background: rgba(226, 240, 233, 0.09);
+}
+.placar-item svg { width: 14px; height: 14px; stroke-width: 2.8; }
+.placar-item b { font-family: var(--numero); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--palco-texto); }
+.placar-item[data-tipo="reps"] svg, .placar-item[data-tipo="reps"] b { color: #39e27a; }
+.placar-item[data-tipo="abaixo"] svg, .placar-item[data-tipo="abaixo"] b { color: #ffb340; }
+.placar-item[data-tipo="liberada"] { color: #04140a; background: linear-gradient(115deg, #39e27a, #5bd4e4); font-weight: 700; }
+.placar-item[data-tipo="liberada"] b { color: inherit; }
 .progresso { height: 5px; border-radius: 3px; background: var(--cartao-2); overflow: hidden; }
 .progresso i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(115deg, #39e27a, #5bd4e4); transition: width 0.45s var(--facil); }
 .cartao.vazio { display: grid; gap: 4px; padding: 18px 16px; }
@@ -290,35 +302,47 @@ label.rotulo { display: block; font-size: 0.76rem; color: var(--texto-2); margin
 .sugestao[data-tipo="subir"] { color: var(--tinta); }
 .sugestao[data-tipo="primeira"] { color: var(--texto-2); font-weight: 500; }
 
-/* Tabela das series: Serie | Anterior | kg | Reps | feita. O cabecalho aparece uma vez. */
+/* Todas as series antes de comecar: Serie | Base | Hoje (a meta, ou o que foi feito) | marca.
+   Cada linha e um botao: tocar abre a partida naquela serie. */
+.ex-metodo { font-size: 0.8rem; color: var(--texto-2); margin: 5px 0 0; }
+.ex-metodo b { color: var(--ciano); font-weight: 700; }
 .series { margin: 4px -6px 2px; }
 .serie {
-  position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr) 72px 60px 46px; align-items: center; column-gap: 7px;
-  min-height: 54px; padding: 0 6px; border-radius: 13px;
+  position: relative; width: 100%; display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr) minmax(58px, auto); align-items: center; column-gap: 7px;
+  min-height: 50px; padding: 0 6px; border-radius: 13px; text-align: left; font-variant-numeric: tabular-nums;
 }
 .serie > span { min-width: 0; position: relative; }
-.serie-luz { position: absolute; inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--tinta) 15%, transparent); transform-origin: left; pointer-events: none; }
+.serie > .selo { justify-self: end; }
+.serie-luz { position: absolute; inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--tinta) 12%, transparent); transform-origin: left; pointer-events: none; }
 .serie.cabecalho { min-height: 24px; font-size: 0.68rem; font-weight: 600; color: var(--texto-3); }
-.serie.cabecalho > span:not(:nth-child(2)) { text-align: center; }
-.serie .n { font-family: var(--numero); font-size: 1rem; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; color: var(--texto-2); }
-.serie .anterior { font-size: 0.84rem; color: var(--texto-2); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.campo-serie {
-  width: 100%; height: 44px; border: 0; border-radius: 11px; padding: 0 2px;
-  background: var(--cartao-2); color: var(--texto); text-align: center;
-  font-family: var(--numero); font-size: 1.28rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; letter-spacing: -0.01em;
-}
-.campo-serie:focus { outline: 2px solid var(--tinta); outline-offset: -2px; }
-.check { width: 46px; height: 44px; border-radius: 12px; background: var(--cartao-2); display: grid; place-items: center; color: var(--texto-3); }
-.check svg { width: 22px; height: 22px; }
-.exercicio.atual .serie:not(.feita):not(.cabecalho) .check { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tinta) 55%, transparent); color: var(--tinta); }
-/* Feita: a linha ganha a cor e os numeros ficam firmes. */
-.serie.feita .campo-serie { background: transparent; }
+.serie.cabecalho > span:first-child { text-align: center; }
+.serie .n { font-family: var(--numero); font-size: 0.94rem; font-weight: 700; text-align: center; color: var(--texto-2); }
+.serie .anterior { font-size: 0.9rem; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.serie .meta, .serie .hoje { font-family: var(--numero); font-size: 1.06rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.serie .meta { color: var(--texto-2); font-weight: 600; }
+.exercicio.atual .serie:not(.feita):not(.cabecalho) .meta { color: var(--texto); }
 .serie.feita .n { color: var(--tinta); }
-.serie.feita .check { background: var(--marca); color: var(--sobre-tinta); }
+button.serie:active { transform: none; opacity: 1; background: var(--cartao-2); }
 .so-leitor { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.ex-acoes { display: flex; justify-content: space-between; }
+.comecar { min-height: 50px; margin: 8px 0 2px; border-radius: 16px; font-size: 1.02rem; }
+.comecar svg { width: 18px; height: 18px; }
+.ex-acoes { display: flex; justify-content: space-between; gap: 8px; }
 
-/* Exercicio fechado: uma linha so; tocar abre de novo. */
+/* A marca contra a ultima vez: seta e o quanto. Verde subiu, cinza igual, laranja abaixo. */
+.selo {
+  display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px 3px 6px; border-radius: 9px;
+  font-family: var(--numero); font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: var(--texto-2); background: var(--cartao-2);
+}
+.selo svg { width: 13px; height: 13px; stroke-width: 2.8; }
+.selo[data-tipo="carga"], .selo[data-tipo="reps"] { color: var(--tinta); background: color-mix(in srgb, var(--tinta) 15%, transparent); }
+.selo[data-tipo="abaixo"] { color: var(--laranja); background: color-mix(in srgb, var(--laranja) 15%, transparent); }
+.selo[data-tipo="nova"] { color: var(--ciano); background: color-mix(in srgb, var(--ciano) 14%, transparent); padding-left: 8px; }
+.selo.vazio { background: none; box-shadow: inset 0 0 0 0.5px var(--sep); color: var(--texto-3); font-weight: 600; padding-left: 8px; }
+.selo.grande { font-size: 1.5rem; font-weight: 800; padding: 6px 14px 6px 10px; border-radius: 14px; letter-spacing: -0.01em; }
+.selo.grande svg { width: 24px; height: 24px; }
+
+/* Exercicio fechado: uma linha so, com o resultado contra a ultima vez; tocar abre de novo. */
 .exercicio.fechado { padding: 0; }
 .ex-resumo {
   width: 100%; min-height: 58px; padding: 10px 14px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; text-align: left;
@@ -326,7 +350,11 @@ label.rotulo { display: block; font-size: 0.76rem; color: var(--texto-2); margin
 .ex-resumo:active { transform: none; opacity: 1; background: var(--cartao-2); border-radius: var(--raio); }
 .ex-selo { width: 30px; height: 30px; border-radius: 50%; background: var(--marca); color: var(--sobre-tinta); display: grid; place-items: center; }
 .ex-selo svg { width: 18px; height: 18px; }
+.ex-resumo-texto { display: grid; gap: 1px; min-width: 0; }
 .ex-resumo-nome { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ex-resumo-proximo { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; font-weight: 700; color: var(--tinta); font-variant-numeric: tabular-nums; }
+.ex-resumo-proximo svg { width: 14px; height: 14px; }
+.ex-resumo-lado { display: grid; justify-items: end; gap: 3px; }
 .ex-resumo-numeros { font-family: var(--numero); font-size: 0.94rem; font-weight: 600; color: var(--texto-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Descanso: a contagem grande, com a barra que vai esvaziando. */
@@ -442,6 +470,142 @@ dialog.folha::backdrop { background: rgba(0, 0, 0, 0.55); animation: escurece 0.
 .ed-linha label { font-size: 0.7rem; color: var(--texto-2); display: grid; gap: 4px; }
 .ed-linha .campo, .ed-ex .campo { min-height: 44px; }
 .ed-botoes { display: flex; gap: 6px; justify-content: flex-end; }
+.ed-linha.ed-metodo { grid-template-columns: 1fr; }
+.ed-linha.ed-metodo.com-drops { grid-template-columns: 2fr 1fr; }
+.ed-explica { margin: 0; font-size: 0.76rem; color: var(--texto-2); }
+.lista-simples.historico li { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; font-variant-numeric: tabular-nums; }
+
+/* ---------- o treino serie a serie (a partida) ----------
+   Tela cheia, noturna nos dois temas como o palco: a barra 3D foi iluminada para isso. */
+
+dialog.jogo {
+  --fundo: #070a09; --cartao: #131816; --cartao-2: #1f2522; --cartao-3: #2d3430;
+  --borda: rgba(226, 240, 233, 0.08); --sep: rgba(226, 240, 233, 0.12);
+  --texto: #f3f7f4; --texto-2: rgba(226, 238, 231, 0.68); --texto-3: rgba(226, 238, 231, 0.56);
+  --tinta: #39e27a; --sobre-tinta: #04140a; --ciano: #5bd4e4; --laranja: #ffb340;
+  --marca: linear-gradient(115deg, #39e27a, #5bd4e4); --vidro: rgba(19, 24, 22, 0.76);
+  color-scheme: dark;
+  border: 0; padding: 0; margin: 0; width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh;
+  color: var(--texto); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  background:
+    radial-gradient(90% 34% at 50% 24%, rgba(57, 226, 122, 0.15), transparent 72%),
+    radial-gradient(60% 26% at 88% 20%, rgba(91, 212, 228, 0.11), transparent 72%),
+    linear-gradient(180deg, #070a09, #0c1110 46%, #070a09);
+}
+dialog.jogo[open] { animation: sobe 0.38s cubic-bezier(0.32, 0.72, 0, 1); }
+dialog.jogo::backdrop { background: #070a09; }
+.jogo-topo {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 4px;
+  min-height: 52px; padding: var(--topo) 12px 0 6px;
+}
+.jogo-titulo { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.jogo-num { font-family: var(--numero); font-size: 0.94rem; font-weight: 700; color: var(--tinta); font-variant-numeric: tabular-nums; }
+.jogo-nome { font-size: 1.06rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jogo .chip { color: var(--ciano); }
+
+/* As fases: uma pilula por serie. A da vez tem o contorno; a feita ganha a cor do resultado. */
+.fases { list-style: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 0 2px; margin: 0; padding: 0 12px; }
+.fase-pilula { min-width: 40px; height: 44px; display: grid; place-items: center; }
+.fase-pilula span {
+  display: grid; place-items: center; min-width: 34px; height: 30px; padding: 0 8px; border-radius: 10px;
+  font-family: var(--numero); font-size: 0.82rem; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: var(--cartao-2); color: var(--texto-3);
+}
+.fase-pilula[data-estado="feita"] span { background: color-mix(in srgb, var(--tinta) 20%, transparent); color: var(--tinta); }
+.fase-pilula[data-estado="feita"][data-tipo="igual"] span { background: var(--cartao-3); color: var(--texto); }
+.fase-pilula[data-estado="feita"][data-tipo="abaixo"] span { background: color-mix(in srgb, var(--laranja) 20%, transparent); color: var(--laranja); }
+.fase-pilula[data-estado="feita"][data-tipo="nova"] span { background: color-mix(in srgb, var(--ciano) 18%, transparent); color: var(--ciano); }
+.fase-pilula[data-estado="atual"] span { background: none; box-shadow: inset 0 0 0 1.5px var(--tinta); color: var(--tinta); }
+
+.jogo-palco { position: relative; height: clamp(84px, 16dvh, 150px); }
+.jogo-cena { position: absolute; inset: 0; touch-action: pan-y; }
+.carimbo {
+  position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 1px; text-align: center;
+  padding: 0 16px; pointer-events: none;
+  background: radial-gradient(64% 96% at 50% 50%, rgba(7, 10, 9, 0.95), rgba(7, 10, 9, 0.84) 58%, transparent 90%);
+}
+.carimbo:empty { display: none; }
+.carimbo b { display: inline-flex; align-items: center; gap: 4px; font-family: var(--numero); font-size: 2.3rem; font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.carimbo b svg { width: 30px; height: 30px; stroke-width: 3; }
+.carimbo > span { font-size: 0.86rem; font-weight: 600; color: var(--texto); max-width: 30ch; }
+.carimbo[data-tipo="reps"] b, .carimbo[data-tipo="carga"] b { color: var(--tinta); }
+.carimbo[data-tipo="abaixo"] b { color: var(--laranja); }
+.carimbo[data-tipo="nova"] b { color: var(--ciano); }
+.faisca { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: #39e27a; pointer-events: none; }
+.faisca:nth-of-type(odd) { background: #5bd4e4; }
+
+.jogo-descanso { padding: 4px 16px 0; max-width: 520px; margin: 0 auto; }
+.jogo-descanso:empty { display: none; }
+.jogo-descanso .descanso { position: relative; left: auto; bottom: auto; transform: none; width: 100%; animation: none; box-shadow: none; background: var(--cartao); }
+
+.jogo-corpo { display: grid; gap: 10px; max-width: 520px; margin: 0 auto; padding: 8px 16px calc(var(--base) + 16px); }
+.jogo-etapa { font-family: var(--numero); font-size: 1.7rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin: 0; font-variant-numeric: tabular-nums; }
+.jogo-etapa small { font-size: 0.6em; font-weight: 700; letter-spacing: 0; color: var(--texto-2); }
+.jogo-base, .jogo-meta {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: baseline; gap: 2px 10px;
+  padding: 11px 14px; border-radius: 16px; background: var(--cartao); border: 0.5px solid var(--borda);
+}
+.jogo-rotulo { font-size: 0.76rem; font-weight: 600; color: var(--texto-3); }
+.jogo-base b, .jogo-meta b { font-family: var(--numero); font-size: 1.28rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.jogo-base b.sem { font-size: 0.94rem; font-weight: 600; color: var(--texto-2); }
+.jogo-quando { font-size: 0.76rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+/* A meta e o aviso da serie: o contorno da marca e a frase que diz o que vale hoje. */
+.jogo-meta { border: 1.5px solid transparent; padding: 10px 13px; background: linear-gradient(var(--cartao), var(--cartao)) padding-box, var(--marca) border-box; }
+.jogo-meta b { color: var(--tinta); }
+.jogo-meta p { grid-column: 2 / -1; margin: 0; font-size: 0.86rem; font-weight: 600; }
+
+/* As repeticoes: o numero grande no meio, menos e mais do tamanho do polegar. */
+.passo-numero { display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px; align-items: center; gap: 10px; }
+.passo-botao { height: 64px; border-radius: 20px; background: var(--cartao-2); color: var(--tinta); display: grid; place-items: center; }
+.passo-botao svg { width: 28px; height: 28px; }
+.passo-valor { display: grid; justify-items: center; }
+.passo-valor span { font-size: 0.76rem; font-weight: 600; color: var(--texto-2); margin-top: -2px; }
+.campo-jogo {
+  width: 100%; height: 44px; border: 0; padding: 0; border-radius: 14px; background: transparent; color: var(--texto); text-align: center;
+  font-family: var(--numero); font-size: 1.9rem; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+}
+.campo-jogo.grande { height: 78px; font-size: 4.3rem; font-weight: 800; letter-spacing: -0.035em; }
+.campo-jogo:focus { outline: 2px solid var(--tinta); outline-offset: -2px; }
+.passo-numero.carga { grid-template-columns: 52px minmax(0, 1fr) 52px; padding: 0 6px; }
+.passo-numero.carga .passo-botao { height: 48px; border-radius: 16px; color: var(--texto-2); }
+.passo-numero.carga .passo-botao svg { width: 22px; height: 22px; }
+.ao-vivo { display: flex; justify-content: center; min-height: 26px; margin: -6px 0 -2px; }
+/* O botao que grava fica sempre ao alcance do polegar, mesmo com o descanso ou o texto grande empurrando a tela. */
+.jogo-feito {
+  min-height: 60px; border-radius: 20px; font-size: 1.14rem; margin-top: 2px; min-width: 0;
+  position: sticky; bottom: calc(var(--base) + 12px); z-index: 3; box-shadow: 0 0 0 8px #070a09, 0 -18px 22px 4px rgba(7, 10, 9, 0.85);
+}
+.jogo-feito svg { width: 22px; height: 22px; stroke-width: 2.8; }
+.corta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jogo-acoes { display: flex; justify-content: space-between; gap: 8px; min-height: 44px; }
+
+/* O fim do exercicio: o resultado, serie por serie, e a conta da carga do proximo treino. */
+.jogo-etapa.fim { font-family: var(--display); font-size: 2.3rem; text-transform: uppercase; letter-spacing: 0.01em; line-height: 1; }
+.fim-resultado { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.fim-resultado > b { font-family: var(--numero); font-size: 1.4rem; font-weight: 800; color: var(--ciano); }
+.fim-resultado > span:last-child { font-size: 0.84rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.fim-lista { list-style: none; margin: 0; padding: 2px 14px; border-radius: 16px; background: var(--cartao); border: 0.5px solid var(--borda); }
+.fim-lista li { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(70px, auto); align-items: center; gap: 10px; min-height: 44px; border-top: 0.5px solid var(--sep); font-size: 0.9rem; color: var(--texto-2); }
+.fim-lista li:first-child { border-top: 0; }
+.fim-lista b { font-family: var(--numero); font-size: 1rem; font-weight: 700; color: var(--texto); font-variant-numeric: tabular-nums; }
+.fim-lista li > :last-child { justify-self: end; }
+.caixa-carga { display: grid; gap: 3px; padding: 14px 16px; border-radius: 18px; background: var(--cartao); border: 0.5px solid var(--borda); }
+.caixa-carga b { font-size: 1rem; font-variant-numeric: tabular-nums; }
+.caixa-carga p { margin: 0; font-size: 0.84rem; color: var(--texto-2); }
+.caixa-carga.liberada { grid-template-columns: 46px minmax(0, 1fr); column-gap: 12px; align-items: center; border: 0; background: var(--marca); color: var(--sobre-tinta); }
+.caixa-carga.liberada > b, .caixa-carga.liberada > p { grid-column: 2; color: inherit; }
+.caixa-carga.liberada > b { font-size: 0.82rem; font-weight: 700; }
+.caixa-carga.liberada .caixa-grande { font-family: var(--numero); font-size: 1.5rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.caixa-icone { grid-row: 1 / span 3; position: relative; width: 46px; height: 46px; border-radius: 50%; background: rgba(4, 20, 10, 0.16); display: grid; place-items: center; }
+.caixa-icone svg { width: 24px; height: 24px; }
+/* Telas baixas (iPhone SE): a barra encolhe e as repeticoes ficam um pouco menores. */
+@media (max-height: 640px) {
+  .jogo-palco { height: 76px; }
+  .campo-jogo.grande { height: 62px; font-size: 3.4rem; }
+  .passo-botao { height: 54px; }
+  .jogo-corpo { gap: 8px; }
+}
+
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
