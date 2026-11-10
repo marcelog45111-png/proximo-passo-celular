@@ -55,6 +55,11 @@ function lerExercicio(e) {
     descansoS: numero(e.descansoS) !== null && e.descansoS >= 15 && e.descansoS <= 600 ? Math.round(e.descansoS) : null,
     nota: typeof e.nota === 'string' ? e.nota : '',
     aquecimento: Array.isArray(e.aquecimento) ? e.aquecimento.map(serie).filter((s) => s.reps > 0) : [],
+    // Como aquecer, escolhido no Editar treino: auto (a regra do dia), nenhum ou manual (a lista
+    // acima). Sem escolha: manual se ha lista, senao auto.
+    aquecimentoModo: MODOS_DE_AQUECIMENTO.includes(e.aquecimentoModo) ? e.aquecimentoModo : null,
+    // O musculo escolhido quando o nome nao diz (ou diz errado); null = pelo nome.
+    musculo: typeof e.musculo === 'string' && Object.hasOwn(MUSCULOS, e.musculo) ? e.musculo : null,
     referencia: e.referencia && typeof e.referencia === 'object'
       ? { carga: numero(e.referencia.carga, 0), reps: (Array.isArray(e.referencia.reps) ? e.referencia.reps : []).map((r) => Math.round(numero(r, 0))).filter((r) => r > 0) }
       : null,
@@ -62,9 +67,10 @@ function lerExercicio(e) {
 }
 
 // Cada exercicio leva quantas series de aquecimento o dia pede (pela ordem do treino).
+// Sem sessao nem carga: a previsao pela ordem do plano (treinoComAquecimento refina para hoje).
 const comAquecimento = (exercicios) => {
   const regra = aquecimentoDoDia(exercicios);
-  return exercicios.map((ex, i) => ({ ...ex, aquecer: regra[i].aquecer, aquecerModo: regra[i].aquecerModo, grupo: regra[i].grupo }));
+  return exercicios.map((ex, i) => ({ ...ex, ...regra[i] }));
 };
 
 /** O plano gravado, conferido. Nunca lanca; plano estragado vira vazio. */
@@ -108,6 +114,12 @@ export function lerSessao(texto) {
       encerrados: (Array.isArray(s.encerrados) ? s.encerrados : []).filter((id) => typeof id === 'string'),
       // exercicios em que a pessoa pulou o aquecimento hoje
       semAquecimento: (Array.isArray(s.semAquecimento) ? s.semAquecimento : []).filter((id) => typeof id === 'string'),
+      // quantas series de aquecimento cada exercicio tinha quando comecou (a lista segue o roteiro).
+      // Sessao de antes disso: as linhas de aquecimento que ja estao na lista.
+      aquecer: Object.fromEntries(Object.entries(exercicios).filter(([, l]) => l.length > 0).map(([id, l]) => {
+        const n = s.aquecer?.[id];
+        return [id, Number.isInteger(n) && n >= 0 && n <= 20 ? n : l.filter((x) => x.t === 'a').length];
+      })),
       atualizadoEm: typeof s.atualizadoEm === 'string' ? s.atualizadoEm : '',
     };
   } catch {
@@ -176,8 +188,8 @@ export function roteiro(exercicio, total = 0) {
   const normal = () => { const i = passos.filter((p) => p.tipo === 'serie').length + 1; por('serie', `Série ${i}`, String(i), m === 'fst7' && i > 1 ? METODOS.fst7.descansoS : null); };
 
   // O aquecimento vem antes de tudo (10/11/2026). Quantas series: as anotadas no plano ou
-  // as que a regra decidiu pela ordem do treino (aquecimentoDoDia, gravado em `aquecer`).
-  const nAquecer = exercicio.aquecimento?.length > 0 ? exercicio.aquecimento.length : (exercicio.aquecer ?? 0);
+  // as que a regra do dia decidiu (aquecimentoDoDia, gravado em `aquecer`).
+  const nAquecer = exercicio.aquecer ?? exercicio.aquecimento?.length ?? 0;
   for (let i = 1; i <= nAquecer; i += 1) passos.push({ tipo: 'aquecimento', t: 'a', rotulo: `Aquecimento ${i}`, curto: `A${i}`, descansoS: null });
 
   if (m === 'myo') {
@@ -259,7 +271,7 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
   const anteriores = { m: validas.filter((s) => s.t === 'm'), d: validas.filter((s) => s.t === 'd') };
   const tipo = p === null ? 'primeira' : p.sobe ? 'subir' : 'bater';
   const carga = p === null ? null : p.sobe ? p.nova : p.carga;
-  const cargaDeHoje = carga ?? exercicio.referencia?.carga ?? 0;
+  const cargaDeHoje = cargaDeTrabalhoDeHoje(exercicio, ultima);
   const vez = { w: 0, m: 0, d: 0 };
   let cargaDoDrop = cargaDeHoje;
   let alvoPrincipal = faixa.min;
@@ -465,33 +477,67 @@ export function intervaloAntes(proximo, exercicio = null) {
 export const relogio = (seg) => `${Math.floor(seg / 60)}:${String(Math.floor(seg % 60)).padStart(2, '0')}`;
 
 // ---------------------------------------------------------------------------
-// Aquecimento (10/11/2026, pedido: "nao faz sentido comecar no pull down sem series de
-// aquecimento, pre ativamento do musculo"). A regra:
-//  - o plano anotou o aquecimento do exercicio? Vale o dele, como esta;
-//  - primeiro exercicio do dia para o musculo: rampa ate perto da carga de trabalho,
-//    cada degrau mais pesado e com menos repeticoes (o ultimo degrau pesado ajuda a
-//    serie de trabalho). Composto pesado (ate 10 reps): 3 degraus (40% x 10, 60% x 6,
-//    80% x 3); composto de 11-15 reps ou isolado ate 12: 2 (50% x 10, 75% x 5); faixa
-//    alta: 1 (60% x 8);
-//  - musculo ja aquecido no dia: composto pesado ganha 1 serie-ponte (70% x 4); o resto
-//    entra direto. Peito e ombro compostos aquecem o triceps; costas compostas, o biceps.
-// Aquecimento nunca conta na evolucao nem na conta da carga.
+// Aquecimento (10/11/2026). Primeiro pedido: "nao faz sentido comecar no pull down sem series
+// de aquecimento, pre ativamento do musculo". Segundo, no mesmo dia: "o aquecimento deve
+// englobar uma logica global a todas as series do dia, fadiga acumulada e a ordem dos
+// exercicios ... e a opcao de aquecimento pode ser tirada ou editada".
+//
+// A conta anda pelo dia inteiro: primeiro os exercicios ja comecados, na ordem em que foram
+// feitos de verdade (a ordem da sessao), depois os que faltam, na ordem do plano. Por musculo
+// ela guarda:
+//  - calor: series feitas nele hoje (aquecimento e trabalho); o composto passa meio calor
+//    para quem ajuda (peito -> triceps e ombro; costas -> biceps; quadriceps -> gluteo...);
+//  - series pesadas: de composto ate 10 reps, nele;
+// e o total de series de trabalho do dia (o corpo ja quente).
+// Para cada exercicio no automatico:
+//  1. frio, o exercicio pede: composto ate 6 reps 4 degraus, ate 10 3, ate 15 2, mais 1;
+//     isolado ate 12 reps 2, mais 1. Cada degrau mais pesado e com menos reps;
+//  2. quente (calor >= 2): composto pesado faz 1 serie-ponte (70% x 4) para sentir a carga
+//     nova, a nao ser que o musculo ja tenha 9+ series pesadas (ai so gastaria energia);
+//     o resto entra direto. Morno (so ajudou em outro exercicio): um degrau a menos
+//     (composto fica com 1, isolado pode entrar direto);
+//  3. musculo treinado ontem ou anteontem e ainda frio ou morno: um degrau leve a mais (ainda
+//     recuperando, sobe mais devagar), ate 4;
+//  4. com 12+ series de trabalho no dia: um degrau a menos, nunca abaixo de 1 (o corpo ja
+//     esta quente; falta so acostumar o musculo com a carga);
+//  5. com a carga de hoje: degrau sem carga, na carga de trabalho ou com a mesma carga de
+//     outro degrau sai (fica o mais pesado).
+// A pessoa escolhe no Editar treino: automatico, sem aquecimento ou do jeito dela (carga x
+// reps). Exercicio ja comecado hoje fica com o aquecimento de quando comecou (`sessao.aquecer`),
+// porque a lista gravada segue o roteiro. Aquecimento nunca conta na evolucao nem na carga.
 
 const SEM_ACENTO = (t) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-// Ordem importa: o primeiro que casar vence ("posterior de ombro" antes de "posterior").
+
+/** Os musculos que o app conhece, com o nome da tela. */
+export const MUSCULOS = {
+  peito: 'Peito', costas: 'Costas', ombro: 'Ombro', triceps: 'Tríceps', biceps: 'Bíceps', antebraco: 'Antebraço',
+  trapezio: 'Trapézio', quadriceps: 'Quadríceps', posterior: 'Posterior de coxa', gluteo: 'Glúteo', adutores: 'Adutores',
+  panturrilha: 'Panturrilha', lombar: 'Lombar', abdomen: 'Abdômen',
+};
+// Ordem importa: o primeiro que casar vence ("posterior de ombro" antes de "posterior", "leg
+// curl" antes de "curl", "remada alta" antes de "remada"). [nome, musculo, quando e composto]
 const GRUPOS = [
-  [/panturrilha|gemeos/, 'panturrilha', null],
-  [/posterior de ombro|crucifixo inverso|face pull|elevacao lateral|elevacao frontal|frontal|desenvolvimento|arnold/, 'ombro', /desenvolvimento|arnold/],
-  [/triceps|frances|testa|coice|anjo|corda|mergulho no banco/, 'triceps', null],
-  [/rosca|biceps|martelo|scott/, 'biceps', null],
-  [/supino|crucifixo|crossover|voador|peck|paralela|flexao|inclinado|declinado/, 'peito', /supino|paralela|flexao|inclinado|declinado/],
-  [/pull.?down|puxada|remada|barra fixa|serrote|unilateral|pullover|graviton/, 'costas', /pull.?down|puxada|remada|barra fixa|serrote|unilateral|graviton/],
-  [/agachamento|leg press|hack|afundo|bulgaro|passada|extensora|sissy/, 'quadriceps', /agachamento|leg press|hack|afundo|bulgaro|passada/],
-  [/flexora|stiff|terra|romeno|good morning/, 'posterior', /stiff|terra|romeno|good morning/],
-  [/gluteo|elevacao pelvica|hip thrust|abdutora/, 'gluteo', /hip thrust|elevacao pelvica/],
+  [/panturrilha|gemeos|soleo/, 'panturrilha', null],
+  [/gluteo|hip thrust|elevacao pelvica|abdutora|abducao/, 'gluteo', /hip thrust|elevacao pelvica/],
+  [/adutora|adutor|aducao/, 'adutores', null],
+  [/encolhimento|trapezio|remada alta/, 'trapezio', /remada alta/],
+  [/posterior de ombro|deltoide|crucifixo inverso|face pull|elevacao lateral|elevacao frontal|frontal|desenvolvimento|arnold|militar|overhead|shoulder/, 'ombro', /desenvolvimento|arnold|militar|overhead|shoulder press/],
+  [/triceps|frances|testa|coice|anjo|corda|mergulho no banco|pushdown/, 'triceps', null],
+  [/flexora|leg curl|stiff|terra|romeno|good morning|nordic/, 'posterior', /stiff|terra|romeno|good morning/],
+  [/rosca|biceps|martelo|scott|curl/, 'biceps', null],
+  [/supino|crucifixo|crossover|voador|peck|pec deck|paralela|flexao|inclinado|declinado|chest|fly/, 'peito', /supino|paralela|flexao|inclinado|declinado|chest press/],
+  [/pull.?down|puxada|remada|barra fixa|serrote|unilateral|pullover|graviton|pulley|t.?bar|cavalinho/, 'costas', /pull.?down|puxada|remada|barra fixa|serrote|unilateral|graviton|t.?bar|cavalinho/],
+  [/agachamento|leg press|leg 45|hack|afundo|bulgaro|passada|extensora|sissy|squat/, 'quadriceps', /agachamento|leg press|leg 45|hack|afundo|bulgaro|passada|squat/],
+  [/lombar|hiperextensao|banco romano/, 'lombar', null],
+  [/abdominal|abdomen|prancha|crunch|infra|obliquo|elevacao de pernas/, 'abdomen', null],
+  [/antebraco|punho/, 'antebraco', null],
 ];
+// Concordancia: 'costas frias', 'adutores aquecidos', 'panturrilha treinada'.
+const GENERO = { costas: 'fp', adutores: 'mp', panturrilha: 'f', lombar: 'f' };
+const concorda = (grupo, palavra) => { const g = GENERO[grupo] ?? 'm'; const base = g[0] === 'f' ? palavra.replace(/o$/, 'a') : palavra; return g[1] === 'p' ? `${base}s` : base; };
+const COMPOSTOS = GRUPOS.map(([, , c]) => c).filter(Boolean);
 // Quem, sendo composto, ja deixa outro musculo aquecido.
-const AQUECE_TAMBEM = { peito: ['triceps', 'ombro'], ombro: ['triceps'], costas: ['biceps'], quadriceps: ['gluteo', 'posterior'], posterior: ['gluteo'] };
+const AQUECE_TAMBEM = { peito: ['triceps', 'ombro'], ombro: ['triceps'], costas: ['biceps'], quadriceps: ['gluteo', 'posterior', 'adutores'], posterior: ['gluteo', 'lombar'], gluteo: ['posterior'] };
 
 /** O musculo do exercicio pelo nome. Nome que nao casa vira um grupo so dele (isolado). */
 export function grupoDoExercicio(nome) {
@@ -500,24 +546,32 @@ export function grupoDoExercicio(nome) {
   return { grupo: `outro:${t}`, composto: false };
 }
 
-const RAMPAS = { 3: [[0.4, 10], [0.6, 6], [0.8, 3]], 2: [[0.5, 10], [0.75, 5]], 1: [[0.6, 8]] };
-const PONTE = [[0.7, 4]];
-
-/** Quantas series de aquecimento e de que jeito, para cada exercicio do dia, na ordem. */
-export function aquecimentoDoDia(exercicios) {
-  const quentes = new Set();
-  return exercicios.map((ex) => {
-    const { grupo, composto } = grupoDoExercicio(ex.nome);
-    const max = faixaDe(ex).max;
-    let n = 0;
-    let modo = 'rampa';
-    if (!quentes.has(grupo)) n = composto ? (max <= 10 ? 3 : max <= 15 ? 2 : 1) : (max <= 12 ? 2 : 1);
-    else if (composto && max <= 10) { n = 1; modo = 'ponte'; }
-    quentes.add(grupo);
-    if (composto) for (const g of AQUECE_TAMBEM[grupo] ?? []) quentes.add(g);
-    return { aquecer: n, aquecerModo: modo, grupo, composto };
-  });
+/**
+ * O musculo que vale: o escolhido no Editar treino ou o do nome. Nome desconhecido sem escolha
+ * fica num grupo so dele, e composto se a faixa for pesada (ate 8 reps).
+ */
+export function musculoDoExercicio(ex) {
+  const pelo = grupoDoExercicio(ex.nome);
+  const conhecido = !pelo.grupo.startsWith('outro:');
+  if (ex.musculo && Object.hasOwn(MUSCULOS, ex.musculo)) {
+    if (ex.musculo === pelo.grupo) return { ...pelo, reconhecido: true };
+    const composto = COMPOSTOS.some((re) => re.test(SEM_ACENTO(ex.nome))) || (!conhecido && faixaDe(ex).max <= 8);
+    return { grupo: ex.musculo, composto, reconhecido: true };
+  }
+  if (conhecido) return { ...pelo, reconhecido: true };
+  return { grupo: pelo.grupo, composto: faixaDe(ex).max <= 8, reconhecido: false };
 }
+
+const RAMPAS = {
+  4: [[0.4, 10], [0.55, 6], [0.7, 4], [0.85, 2]],
+  3: [[0.4, 10], [0.6, 6], [0.8, 3]],
+  2: [[0.5, 10], [0.75, 5]],
+  1: [[0.6, 8]],
+};
+const PONTE = [[0.7, 4]];
+const PESADAS_SEM_PONTE = 9;
+const DIA_CHEIO = 12;
+export const MODOS_DE_AQUECIMENTO = ['auto', 'nenhum', 'manual'];
 
 /** A carga do degrau, no passo de carga do exercicio (nunca abaixo de zero). */
 export function cargaDoDegrau(cargaDeTrabalho, fracao) {
@@ -526,35 +580,189 @@ export function cargaDoDegrau(cargaDeTrabalho, fracao) {
   return Math.max(0, Math.round((cargaDeTrabalho * fracao) / passo) * passo);
 }
 
-/** O alvo e a dica do degrau i do aquecimento, com a carga de trabalho de hoje. */
-export function degrauDeAquecimento(exercicio, i, cargaDeTrabalho) {
-  const doPlano = exercicio.aquecimento?.[i];
-  if (exercicio.aquecimento?.length > 0 && doPlano) {
-    return { alvo: { carga: doPlano.carga, reps: doPlano.reps }, fracao: null, dica: 'Aquecimento do seu plano. Leve, longe da falha; não conta na evolução.' };
+const pedeFrio = (composto, max) => (composto ? (max <= 6 ? 4 : max <= 10 ? 3 : max <= 15 ? 2 : 1) : (max <= 12 ? 2 : 1));
+
+/** Os degraus de uma tabela, com a carga de hoje (sem carga conhecida, so a fracao). */
+function degrausDaTabela(tabela, cargaDeTrabalho, limpar) {
+  const lista = tabela.map(([fracao, reps]) => ({ fracao, reps, carga: cargaDeTrabalho > 0 ? cargaDoDegrau(cargaDeTrabalho, fracao) : null }));
+  if (!limpar || !(cargaDeTrabalho > 0)) return lista;
+  return lista.filter((d, i) => d.carga > 0 && d.carga < cargaDeTrabalho && lista.slice(i + 1).every((o) => o.carga !== d.carga));
+}
+
+const juntarNomes = (nomes) => (nomes.length <= 1 ? nomes.join('') : `${nomes.slice(0, -1).join(', ')} e ${nomes.at(-1)}`);
+const degraus = (n) => `${n} ${n === 1 ? 'degrau' : 'degraus'}`;
+
+/**
+ * O aquecimento de cada exercicio do dia, olhando o dia inteiro. `exercicios` na ordem do
+ * plano; a resposta vem na mesma ordem. ctx (tudo opcional):
+ *  - sessao: a de hoje (a ordem real, as series feitas e o aquecimento de quem ja comecou);
+ *  - recentes: {musculo: dias atras} dos musculos treinados ontem e anteontem;
+ *  - cargas: {exId: carga de trabalho de hoje}, para tirar degrau repetido;
+ *  - agora: o exercicio que a pessoa esta comecando (entra logo depois dos ja comecados).
+ * Cada item: { aquecer (quantos), aquecerModo (rampa, ponte, direto, manual, nenhum),
+ * aquecerDegraus [{carga|null, reps, fracao|null}], aquecerMotivo, grupo, composto }.
+ */
+export function aquecimentoDoDia(exercicios, ctx = {}) {
+  const sessao = ctx.sessao ?? null;
+  const listaDe = (ex) => sessao?.exercicios?.[ex.id] ?? [];
+  const comecou = (ex) => listaDe(ex).some((s) => s.reps > 0);
+  const ordemDaSessao = Object.keys(sessao?.exercicios ?? {});
+  const comecados = exercicios.filter(comecou).sort((a, b) => ordemDaSessao.indexOf(a.id) - ordemDaSessao.indexOf(b.id));
+  // o que a pessoa esta comecando agora vem logo depois dos ja comecados, fora da ordem do plano
+  const agora = exercicios.find((e) => e.id === ctx.agora && !comecou(e)) ?? null;
+  const ordem = [...comecados, ...(agora ? [agora] : []), ...exercicios.filter((e) => !comecou(e) && e !== agora)];
+
+  const calor = {};
+  const pesadas = {};
+  const quem = {};
+  let doDia = 0;
+  const somar = (tabela, g, v) => { tabela[g] = (tabela[g] ?? 0) + v; };
+  const resposta = new Map();
+
+  for (const ex of ordem) {
+    const { grupo, composto } = musculoDoExercicio(ex);
+    const max = faixaDe(ex).max;
+    const nome = MUSCULOS[grupo] ?? ex.nome;
+    const carga = ctx.cargas?.[ex.id] ?? 0;
+    const escolha = MODOS_DE_AQUECIMENTO.includes(ex.aquecimentoModo) ? ex.aquecimentoModo : ex.aquecimento?.length > 0 ? 'manual' : 'auto';
+    let modo;
+    let lista;
+    let motivo;
+
+    if (escolha === 'nenhum') {
+      modo = 'nenhum';
+      lista = [];
+      motivo = 'Sem aquecimento: escolhido no Editar treino.';
+    } else if (escolha === 'manual' && ex.aquecimento?.length > 0) {
+      modo = 'manual';
+      lista = ex.aquecimento.map((s) => ({ carga: s.carga, reps: s.reps, fracao: null }));
+      motivo = 'O seu aquecimento, anotado no Editar treino.';
+    } else {
+      const c = calor[grupo] ?? 0;
+      const deQuem = quem[grupo]?.length ? ` (${juntarNomes([...new Set(quem[grupo])])})` : '';
+      const extras = [];
+      let n;
+      let principal;
+      if (c >= 2) {
+        if (composto && max <= 10 && (pesadas[grupo] ?? 0) < PESADAS_SEM_PONTE) {
+          modo = 'ponte';
+          n = 1;
+          principal = `${nome} ${concorda(grupo, 'já aquecido')}${deQuem}: só uma série-ponte para sentir a carga pesada.`;
+        } else {
+          modo = 'direto';
+          n = 0;
+          principal = composto && max <= 10
+            ? `${nome} já fez ${Math.round(pesadas[grupo])} séries pesadas hoje: entra direto, sem gastar energia.`
+            : `${nome} ${concorda(grupo, 'já aquecido')}${deQuem}: entra direto.`;
+        }
+      } else {
+        n = pedeFrio(composto, max);
+        if (c > 0) n = Math.max(composto ? 1 : 0, n - 1);
+        const dias = ctx.recentes?.[grupo];
+        if (dias && n > 0 && n < 4) {
+          n += 1;
+          extras.push(`${nome} ${concorda(grupo, 'treinado')} ${dias === 1 ? 'ontem' : 'anteontem'}: um degrau leve a mais.`);
+        }
+        if (doDia >= DIA_CHEIO && n > 1) {
+          n -= 1;
+          extras.push(`Já são ${doDia} séries hoje: corpo quente, subida mais curta.`);
+        }
+        modo = n > 0 ? 'rampa' : 'direto';
+        const quantos = n === 0 ? 'entra direto' : `subida em ${degraus(n)}`;
+        principal = c > 0 ? `${nome} já trabalhou ajudando${deQuem}: ${quantos}.`
+          : doDia === 0 && ex === ordem[0] ? `Primeiro exercício do treino, ${nome.toLowerCase()} ${concorda(grupo, 'frio')}: ${quantos}.`
+            : `${nome} ainda ${concorda(grupo, 'frio')} hoje: ${quantos}.`;
+      }
+      lista = n > 0 ? degrausDaTabela(modo === 'ponte' ? PONTE : RAMPAS[n], carga, true) : [];
+      if (lista.length < n) extras.push(lista.length === 0 ? 'Com a carga de hoje, aquecer não muda nada: entra direto.' : 'Com a carga de hoje, os degraus repetidos saíram.');
+      if (lista.length === 0) modo = 'direto';
+      motivo = [principal, ...extras].join(' ');
+    }
+
+    // Exercicio ja comecado hoje: o aquecimento fica como estava (a lista gravada segue o roteiro).
+    const fixo = sessao?.aquecer?.[ex.id];
+    if (typeof fixo === 'number' && fixo !== lista.length) {
+      lista = ex.aquecimento?.length === fixo && escolha !== 'nenhum'
+        ? ex.aquecimento.map((s) => ({ carga: s.carga, reps: s.reps, fracao: null }))
+        : degrausDaTabela(RAMPAS[Math.min(4, Math.max(1, fixo))], carga, false).slice(0, fixo);
+      while (lista.length < fixo) lista.push({ ...lista.at(-1) });
+      modo = fixo === 0 ? 'direto' : modo === 'manual' ? 'manual' : 'rampa';
+      motivo = fixo === 0 ? 'Você começou este exercício sem aquecimento hoje.' : 'Mantido como estava quando você começou o exercício.';
+    }
+
+    // O que o exercicio deixa no corpo: feito (comecado) ou o que o plano manda (ainda nao).
+    const gravada = listaDe(ex);
+    const trabalhoPlano = roteiro({ ...ex, aquecer: 0, aquecimento: [] }).length;
+    const feitas = gravada.filter((s) => s.reps > 0 && s.t !== 'a').length;
+    const encerrado = (sessao?.encerrados ?? []).includes(ex.id);
+    const trabalho = comecou(ex) ? (encerrado ? feitas : Math.max(feitas, trabalhoPlano)) : trabalhoPlano;
+    const aquecidas = comecou(ex) ? gravada.filter((s) => s.reps > 0 && s.t === 'a').length : lista.length;
+    somar(calor, grupo, aquecidas + trabalho);
+    if (composto && max <= 10) somar(pesadas, grupo, trabalho);
+    (quem[grupo] ??= []).push(ex.nome);
+    if (composto) {
+      for (const g of AQUECE_TAMBEM[grupo] ?? []) {
+        somar(calor, g, trabalho / 2);
+        (quem[g] ??= []).push(ex.nome);
+      }
+    }
+    doDia += trabalho;
+    resposta.set(ex.id, { aquecer: lista.length, aquecerModo: modo, aquecerDegraus: lista, aquecerMotivo: motivo, grupo, composto });
   }
-  const tabela = exercicio.aquecerModo === 'ponte' ? PONTE : RAMPAS[exercicio.aquecer] ?? RAMPAS[1];
-  const [fracao, reps] = tabela[Math.min(i, tabela.length - 1)];
-  const ultimo = i === tabela.length - 1;
-  const dica = exercicio.aquecerModo === 'ponte'
-    ? 'Músculo já aquecido: uma série-ponte para a carga pesada.'
-    : ultimo && tabela.length > 1 ? 'Último degrau: pesado e rápido, sem cansar. Não conta na evolução.'
-      : `${Math.round(fracao * 100)}% da carga de trabalho, leve e sem chegar perto da falha.`;
-  return { alvo: { carga: cargaDoDegrau(cargaDeTrabalho, fracao), reps }, fracao, dica };
+  return exercicios.map((ex) => resposta.get(ex.id));
+}
+
+/** A carga de trabalho de hoje no exercicio (a mesma conta do planoDeHoje). */
+export function cargaDeTrabalhoDeHoje(exercicio, ultima) {
+  const p = ultima ? progressao(exercicio, ultima.series) : null;
+  const carga = p === null ? null : p.sobe ? p.nova : p.carga;
+  return carga ?? exercicio.referencia?.carga ?? 0;
+}
+
+/** {musculo: dias atras} dos musculos com series de trabalho ontem e anteontem. */
+export function musculosRecentes(plano, sessoes, hoje) {
+  const porId = new Map(plano.dias.flatMap((d) => d.exercicios.map((e) => [e.id, e])));
+  const recentes = {};
+  for (const s of sessoes) {
+    const dias = diasEntre(s.dia, hoje);
+    if (dias < 1 || dias > 2) continue;
+    for (const [id, lista] of Object.entries(s.exercicios)) {
+      const ex = porId.get(id);
+      if (!ex || feitas(lista).length === 0) continue;
+      const { grupo } = musculoDoExercicio(ex);
+      recentes[grupo] = Math.min(recentes[grupo] ?? 9, dias);
+    }
+  }
+  return recentes;
 }
 
 /**
- * A sessao gravada antes do aquecimento existir nao tem as linhas dele: a lista andaria
- * fora do roteiro. Poe as linhas vazias na frente (so quando nao ha nenhuma de aquecimento).
+ * O treino do dia com o aquecimento decidido pelo dia inteiro: a ordem real da sessao, o que
+ * cada musculo ja fez, o que foi treinado ontem e a carga de hoje de cada exercicio.
  */
-export function alinharSessao(sessao, treino) {
-  if (!treino) return sessao;
-  for (const ex of treino.exercicios) {
-    const lista = sessao.exercicios[ex.id];
-    if (!lista || lista.length === 0 || lista.some((s) => s.t === 'a')) continue;
-    const k = roteiro(ex).filter((p) => p.t === 'a').length;
-    if (k > 0) sessao.exercicios[ex.id] = [...Array.from({ length: k }, () => ({ carga: 0, reps: 0, t: 'a' })), ...lista];
-  }
-  return sessao;
+export function treinoComAquecimento(treino, { sessao = null, sessoes = [], plano = null, hoje = null, agora = null } = {}) {
+  if (!treino) return treino;
+  const cargas = {};
+  for (const ex of treino.exercicios) cargas[ex.id] = cargaDeTrabalhoDeHoje(ex, ultimaVez(ex, sessoes, hoje ?? '9999-12-31'));
+  const recentes = plano && hoje ? musculosRecentes(plano, sessoes, hoje) : null;
+  const regra = aquecimentoDoDia(treino.exercicios, { sessao, cargas, recentes, agora });
+  return { ...treino, exercicios: treino.exercicios.map((ex, i) => ({ ...ex, ...regra[i] })) };
+}
+
+/** O alvo e a dica do degrau i do aquecimento, com a carga de trabalho de hoje. */
+export function degrauDeAquecimento(exercicio, i, cargaDeTrabalho) {
+  const lista = exercicio.aquecerDegraus ?? (exercicio.aquecimento?.length > 0
+    ? exercicio.aquecimento.map((s) => ({ carga: s.carga, reps: s.reps, fracao: null }))
+    : degrausDaTabela(RAMPAS[Math.min(4, Math.max(1, exercicio.aquecer ?? 1))], cargaDeTrabalho, false));
+  const d = lista[Math.min(i, lista.length - 1)] ?? { carga: 0, reps: 8, fracao: null };
+  const carga = d.fracao !== null && d.fracao !== undefined ? cargaDoDegrau(cargaDeTrabalho, d.fracao) : d.carga ?? 0;
+  const ultimo = i === lista.length - 1;
+  const dica = exercicio.aquecerModo === 'manual' || d.fracao === null || d.fracao === undefined
+    ? 'O seu aquecimento. Leve, longe da falha; não conta na evolução.'
+    : exercicio.aquecerModo === 'ponte' ? 'Série-ponte: sinta a carga pesada sem cansar. Não conta na evolução.'
+      : ultimo && lista.length > 1 ? 'Último degrau: pesado e rápido, sem cansar. Não conta na evolução.'
+        : `${Math.round(d.fracao * 100)}% da carga de trabalho, leve e longe da falha.`;
+  return { alvo: { carga, reps: d.reps }, fracao: d.fracao ?? null, dica };
 }
 
 // ---------------------------------------------------------------------------

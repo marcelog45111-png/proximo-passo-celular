@@ -220,10 +220,17 @@ export function abrirJogo(partida, aoFechar) {
     const chance = primeiraDeTrabalho && !ja && analise?.chance
       ? h('p', { class: 'jogo-chance' }, h('span', { class: 'chance', 'data-nivel': analise.chance.nivel, texto: CHANCE[analise.chance.nivel] }), h('span', { texto: analise.recomendacao.texto }))
       : null;
+    // O porque do aquecimento (o dia inteiro: frio, ja aquecido, ontem, dia cheio) no 1o degrau,
+    // ou na 1a serie quando o app decidiu entrar direto.
+    const entraDireto = primeiraDeTrabalho && (o.ex.aquecer ?? 0) === 0 && o.ex.aquecerModo !== 'nenhum';
+    const porque = !ja && o.ex.aquecerMotivo && ((aquecendo && pl.passos.findIndex((p) => p.t === 'a') === i) || entraDireto)
+      ? h('p', { class: 'jogo-porque' }, h('b', { texto: entraDireto ? 'Sem aquecimento' : 'Por que assim' }), h('span', { texto: o.ex.aquecerMotivo }))
+      : null;
     const cartaoMeta = h('div', { class: 'jogo-meta', 'data-tipo': aquecendo ? 'aquecimento' : pl.tipo },
       h('span', { class: 'jogo-rotulo', texto: aquecendo ? 'Leve' : 'Meta' }),
       h('b', { texto: `${kg(alvo.carga)} × ${alvo.reps}` }),
       h('p', { texto: dicaDoPasso }),
+      porque,
       anterior,
       chance);
     const avisoDeAjuste = ajuste ? h('p', { class: 'jogo-ajuste', role: 'status' }, icone(ajuste.carga > (lista.findLast?.((x) => x.reps > 0 && !x.t)?.carga ?? 0) ? 'subir' : 'descer'), ajuste.texto) : null;
@@ -327,6 +334,8 @@ export function abrirJogo(partida, aoFechar) {
     const proximo = o.proximo();
     const linhas = pl.passos.map((p, i) => ({ p, f: feita(lista, i) })).filter((x) => x.f !== null && x.p.t !== 'a');
     const cargas = linhas.filter((x) => !x.p.t).map((x) => x.f.carga);
+    // o aquecimento nao entra na conta do que faltou
+    const deTrabalho = pl.passos.filter((p) => p.t !== 'a').length;
     let caixa = null;
     if (r !== null && r.liberou !== null) {
       caixa = h('div', { class: 'caixa-carga liberada' },
@@ -334,9 +343,9 @@ export function abrirJogo(partida, aoFechar) {
         h('b', { texto: 'Carga liberada' }),
         h('p', { class: 'caixa-grande', texto: `Próximo treino: ${kg(r.liberou)}` }),
         h('p', { texto: `Você fechou ${regraDaCarga(o.ex)}.` }));
-    } else if (r !== null && linhas.length < pl.passos.length) {
+    } else if (r !== null && linhas.length < deTrabalho) {
       caixa = h('div', { class: 'caixa-carga' },
-        h('b', { texto: `Encerrado com ${linhas.length} de ${pl.passos.length}` }),
+        h('b', { texto: `Encerrado com ${linhas.length} de ${deTrabalho}` }),
         h('p', { texto: `No próximo treino a carga continua em ${kg(Math.max(...cargas))}. Ela sobe com ${regraDaCarga(o.ex)}.` }));
     } else if (r !== null) {
       caixa = h('div', { class: 'caixa-carga' },
