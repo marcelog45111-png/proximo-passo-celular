@@ -5,7 +5,7 @@ import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifr
 import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
-  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, regraDaCarga,
+  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga,
   resultadoDoExercicio, roteiro, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
 import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
@@ -471,7 +471,7 @@ function ligarPalco(tela) {
   movimento.rolagemDoPalco(palco, (p) => cenaDaBarra?.rolagem(p));
 }
 
-const quandoFoi = (ultima) => (ultima === null ? null : ultima.dia === null ? 'anotado' : dataCurta(ultima.dia));
+const quandoFoi = (ultima) => (ultima === null ? null : quandoRelativo(ultima.dia, hoje()));
 const rotuloDoExtra = (ex) => (ex.metodo === 'myo' ? 'Adicionar mini' : ex.metodo === 'restpause' ? 'Adicionar pausa' : ex.metodo === 'drop' ? 'Adicionar drop' : 'Adicionar série');
 
 /**
@@ -523,10 +523,11 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
   if (ex.aquecimento.length > 0) cartao.append(h('p', { class: 'ex-linha', texto: `Aquecimento: ${ex.aquecimento.map((s) => `${kg(s.carga)}×${s.reps}`).join(' · ')}` }));
   cartao.append(h('p', { class: 'sugestao', 'data-tipo': plano.tipo }, plano.tipo === 'subir' ? icone('liberada') : null, h('span', { texto: plano.tipo === 'subir' ? `Carga liberada. ${plano.texto}` : plano.texto })));
 
-  // Todas as series de uma vez: Serie | Base | Hoje (a meta, ou o que foi feito) | marca.
+  if (ultima) cartao.append(h('p', { class: 'ex-linha', texto: `Treino anterior: ${quandoFoi(ultima)}` }));
+  // Todas as series de uma vez: Serie | Anterior (o treino anterior) | Hoje (a meta, ou o que foi feito) | marca.
   const series = h('div', { class: 'series', role: 'group', 'aria-label': `Séries de ${ex.nome}` },
     h('div', { class: 'serie cabecalho', 'aria-hidden': 'true' },
-      h('span', { texto: 'Série' }), h('span', { texto: 'Base' }), h('span', { texto: 'Hoje' }), h('span')));
+      h('span', { texto: 'Série' }), h('span', { texto: 'Anterior' }), h('span', { texto: 'Hoje' }), h('span')));
   plano.passos.forEach((passo, i) => {
     const f = lista[i] && lista[i].reps > 0 ? lista[i] : null;
     const v = f ? veredito(f, passo.base) : null;
@@ -535,8 +536,8 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     series.append(h('button', {
       class: `serie${f ? ' feita' : ''}`, 'data-chave': `${ex.id}|${i}`,
       'aria-label': f
-        ? `${passo.rotulo}: feito ${kg(f.carga)} vezes ${f.reps}, ${v.tipo === 'nova' ? 'base registrada' : v.tipo === 'igual' ? 'igual à base' : v.texto}. Corrigir`
-        : `${passo.rotulo}: base ${passo.base ? `${kg(passo.base.carga)} vezes ${passo.base.reps}` : 'ainda não tem'}, meta ${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}. Fazer agora`,
+        ? `${passo.rotulo}: feito ${kg(f.carga)} vezes ${f.reps}, ${v.tipo === 'nova' ? 'primeiro registro' : v.tipo === 'igual' ? 'igual ao treino anterior' : v.texto}. Corrigir`
+        : `${passo.rotulo}: treino anterior ${passo.base ? `${kg(passo.base.carga)} vezes ${passo.base.reps}` : 'ainda não tem'}, meta ${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}. Fazer agora`,
       onclick: () => jogar(ex.id, i),
     },
     f ? h('i', { class: 'serie-luz', 'aria-hidden': 'true' }) : null,
@@ -576,7 +577,7 @@ function partidaDe(exId, comecarEm) {
     encerrar: () => marcarEncerrado(ex.id, true),
     reabrir: () => marcarEncerrado(ex.id, false),
     adicionar: () => adicionarSerie(ex, treino.id),
-    descansar: (segundos) => comecarDescanso(segundos ?? app.descansoS),
+    descansar: (segundos, rotulo, texto) => comecarDescanso(segundos ?? app.descansoS, rotulo, texto),
     pararDescanso,
     cena: {
       montar: (host) => cenaDaBarra?.montarEm(host),
@@ -612,7 +613,7 @@ function gravarSerie(ex, i, valor, treinoId) {
   const lista = s.exercicios[ex.id] ?? [];
   while (lista.length <= i) lista.push({ carga: 0, reps: 0 });
   const t = roteiro(ex, i + 1)[i].t;
-  lista[i] = { carga: valor.carga, reps: valor.reps, ...(t ? { t } : {}) };
+  lista[i] = { carga: valor.carga, reps: valor.reps, ...(t ? { t } : {}), ...(valor.seg > 0 ? { seg: Math.round(valor.seg) } : {}) };
   // series vazias no fim, alem do roteiro, nao precisam ficar guardadas
   const minimo = roteiro(ex).length;
   while (lista.length > minimo && lista.at(-1).reps === 0) lista.pop();
@@ -667,13 +668,14 @@ function cartaoCardio(sessao) {
 // descanso entre as series
 
 let descanso = null;
-function comecarDescanso(segundos = app.descansoS) {
+function comecarDescanso(segundos = app.descansoS, rotulo = 'Descanso', texto = '') {
   pararDescanso();
   const fim = Date.now() + segundos * 1000;
   const el = h('div', { class: 'descanso', role: 'timer', 'aria-live': 'off' });
   const tempo = h('b');
   const barra = h('i', { class: 'descanso-barra', 'aria-hidden': 'true' });
-  el.append(tempo, h('span', { class: 'pequeno', texto: 'Descanso' }),
+  el.dataset.rotulo = rotulo;
+  el.append(tempo, h('span', { class: 'pequeno' }, h('span', { class: 'descanso-rotulo', texto: rotulo }), texto ? h('span', { class: 'descanso-texto', texto }) : null),
     h('button', { class: 'botao', onclick: () => { descansoFim += 30_000; descansoTotal += 30_000; }, texto: '+30s' }),
     h('button', { class: 'botao', onclick: pararDescanso, texto: 'Pular' }), barra);
   let descansoFim = fim;

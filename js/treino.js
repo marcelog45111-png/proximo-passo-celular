@@ -26,11 +26,16 @@ export const METODOS = {
 
 const numero = (v, padrao = null) => (typeof v === 'number' && Number.isFinite(v) ? v : padrao);
 // t: 'm' = mini-serie ou pausa (mesma carga), 'd' = drop. Sem t e serie de trabalho.
-const serie = (s) => ({
-  carga: numero(s?.carga, 0),
-  reps: Math.max(0, Math.round(numero(s?.reps, 0))),
-  ...(s?.t === 'm' || s?.t === 'd' ? { t: s.t } : {}),
-});
+// seg: quanto a serie durou, do "Comecar serie" ao "Parar" (10/11/2026); so quando medida.
+const serie = (s) => {
+  const seg = Math.round(numero(s?.seg, 0));
+  return {
+    carga: numero(s?.carga, 0),
+    reps: Math.max(0, Math.round(numero(s?.reps, 0))),
+    ...(s?.t === 'm' || s?.t === 'd' ? { t: s.t } : {}),
+    ...(seg > 0 && seg < 3600 ? { seg } : {}),
+  };
+};
 
 function lerExercicio(e) {
   if (typeof e !== 'object' || e === null || typeof e.id !== 'string' || typeof e.nome !== 'string' || e.nome.trim() === '') return null;
@@ -246,7 +251,7 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
       vez.d += 1;
       // Mesma carga de trabalho da ultima vez: repete os drops de la. Senao, 20% a menos a cada um.
       cargaDoDrop = base && tipo === 'bater' ? base.carga : Math.round(cargaDoDrop * 0.8);
-      return { ...passo, base, alvo: { carga: cargaDoDrop, reps: base ? base.reps + 1 : faixa.min }, dica: base ? 'Sem descanso: baixe a carga e passe a base.' : 'Sem descanso: baixe a carga e vá até onde der.' };
+      return { ...passo, base, alvo: { carga: cargaDoDrop, reps: base ? base.reps + 1 : faixa.min }, dica: base ? 'Carga mais baixa: passe o treino anterior.' : 'Carga mais baixa: vá até onde der.' };
     }
     if (passo.t === 'm') {
       const base = anteriores.m[vez.m] ?? null;
@@ -255,12 +260,12 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
         const reps = alvoDaMini(faixa);
         return { ...passo, base, alvo: { carga: cargaDeHoje, reps }, dica: `Mini de ${reps} com a mesma carga.` };
       }
-      return { ...passo, base, alvo: { carga: cargaDeHoje, reps: base ? base.reps + 1 : Math.max(1, Math.round(alvoPrincipal / 3)) }, dica: base ? '+1 rep sobre a base, com a mesma carga.' : 'Mesma carga, até onde der.' };
+      return { ...passo, base, alvo: { carga: cargaDeHoje, reps: base ? base.reps + 1 : Math.max(1, Math.round(alvoPrincipal / 3)) }, dica: base ? '+1 rep sobre o treino anterior, com a mesma carga.' : 'Mesma carga, até onde der.' };
     }
     const base = trabalho[vez.w] ?? null;
     vez.w += 1;
     let reps = faixa.min;
-    let dica = 'Primeiro registro: o que você fizer vira a base.';
+    let dica = 'Primeiro registro: o que você fizer vira a referência do próximo treino.';
     if (tipo === 'subir') {
       dica = `Carga nova. Qualquer número de ${faixa.min} a ${faixa.max} vale.`;
     } else if (tipo === 'bater') {
@@ -268,7 +273,7 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
       reps = Math.min(faixa.max, Math.max(faixa.min, antes + 1));
       dica = antes >= faixa.max
         ? `Repita o teto de ${faixa.max}.`
-        : `+${reps - antes} ${plural(reps - antes, 'rep', 'reps')} sobre a base para progredir.`;
+        : `+${reps - antes} ${plural(reps - antes, 'rep', 'reps')} sobre o treino anterior para progredir.`;
     }
     alvoPrincipal = reps;
     return { ...passo, base, alvo: { carga: cargaDeHoje, reps }, dica };
@@ -301,7 +306,7 @@ export function sugestao(exercicio, ultima) {
  * repeticoes com o mesmo peso), 'igual', 'abaixo' ou 'nova' (nao havia base).
  */
 export function veredito(feita, base) {
-  if (!base) return { tipo: 'nova', texto: 'Base registrada' };
+  if (!base) return { tipo: 'nova', texto: 'Primeiro registro' };
   const dCarga = arredondar(feita.carga - base.carga);
   const dReps = feita.reps - base.reps;
   if (dCarga > 0) return { tipo: 'carga', texto: `+${fmtNumero(dCarga)} kg` };
@@ -360,3 +365,69 @@ export const treinoDoDia = (plano, diaSemana) => plano.dias.find((d) => d.diaSem
 export function novoId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
+
+/**
+ * Quando foi o treino anterior, do jeito que se fala (10/11/2026, pedido: "e treino
+ * anterior e tem que ser mostrada a data tipo 1 semana passada, (2), mes passado").
+ * Dias corridos entre os dois dias logicos ('AAAA-MM-DD'). null = anotado no plano.
+ */
+export function quandoRelativo(dia, hoje) {
+  if (dia === null) return 'anotado no plano';
+  const n = Math.round((Date.UTC(...partesDoDia(hoje)) - Date.UTC(...partesDoDia(dia))) / 86_400_000);
+  if (n <= 0) return 'hoje';
+  if (n === 1) return 'ontem';
+  if (n < 7) return `há ${n} dias`;
+  if (n < 14) return 'semana passada';
+  if (n < 30) return `há ${Math.floor(n / 7)} semanas`;
+  if (n < 60) return 'mês passado';
+  if (n < 365) return `há ${Math.floor(n / 30)} meses`;
+  return n < 730 ? 'ano passado' : `há ${Math.floor(n / 365)} anos`;
+}
+const partesDoDia = (dia) => { const [a, m, d] = dia.split('-').map(Number); return [a, m - 1, d]; };
+
+/**
+ * As regras do tempo de cada serie (10/11/2026, pedido: "um botao comecar e parar a
+ * serie, isso serve pro tempo, pq o tempo tem caracteristicas do tipo de serie que e,
+ * se e drop, myo etc, tem que esse sistema com regras"). A serie e medida do
+ * "Comecar" ao "Parar"; o que muda com o metodo e ATE ONDE ir e o que vem DEPOIS.
+ *
+ *  - serie comum: ate a meta de repeticoes; depois, o descanso dos Ajustes;
+ *  - FST-7: ate a meta, mesma carga nas 7; entre elas so 30 a 45 s (40);
+ *  - drop set: as series de trabalho ate a meta; a ultima e cada drop ate a falha;
+ *    entre elas nao ha descanso, so 10 s para baixar a carga;
+ *  - myo-reps: ativacao ate ficar a 1-2 reps da falha; minis com o alvo curto;
+ *    entre elas 20 s (3 a 5 respiracoes fundas);
+ *  - rest-pause: a principal ate a falha; pausas de 20 s e de novo ate a falha.
+ *
+ * regraDaSerie -> { ate: 'meta' | 'falha', curto, durante }
+ * intervaloAntes(proximo) -> { segundos (null = Ajustes), rotulo, texto }
+ */
+export const TROCA_DE_CARGA_S = 10;
+
+export function regraDaSerie(exercicio, passo, proximo = null) {
+  const faixa = faixaDe(exercicio);
+  const nota = exercicio.nota ? ` · ${exercicio.nota}` : '';
+  if (passo.tipo === 'drop') return { ate: 'falha', curto: 'Até a falha', durante: `${fmtKg(passo.alvo.carga)}, sem descanso: vá até a falha.` };
+  if (passo.tipo === 'ativacao') return { ate: 'falha', curto: 'Quase a falha', durante: `Ativação: pare a 1–2 reps da falha (${faixa.min}–${faixa.max} reps)${nota}.` };
+  if (passo.tipo === 'mini') return { ate: 'meta', curto: 'Até a meta', durante: `Mini de ${passo.alvo.reps} com a mesma carga. Não saiu ${passo.alvo.reps}? Encerre as minis.` };
+  if (passo.tipo === 'pausa') return { ate: 'falha', curto: 'Até a falha', durante: 'Mesma carga, de novo até a falha.' };
+  if (exercicio.metodo === 'restpause') return { ate: 'falha', curto: 'Até a falha', durante: `Série principal: até a falha, com boa técnica${nota}.` };
+  if (exercicio.metodo === 'drop' && proximo?.tipo === 'drop') {
+    return { ate: 'falha', curto: 'Até a falha', durante: `Última antes dos drops: até a falha. Ao parar, baixe para ${fmtKg(proximo.alvo.carga)}.` };
+  }
+  if (exercicio.metodo === 'fst7') return { ate: 'meta', curto: 'Até a meta', durante: `Mesma carga nas 7 séries, descanso curto entre elas${nota}.` };
+  // Serie comum: a meta ja esta no cartao; aqui so a nota do exercicio, se houver.
+  return { ate: 'meta', curto: 'Até a meta', durante: exercicio.nota };
+}
+
+export function intervaloAntes(proximo) {
+  if (proximo === null) return { segundos: null, rotulo: 'Descanso', texto: '' };
+  if (proximo.tipo === 'drop') return { segundos: TROCA_DE_CARGA_S, rotulo: 'Troca de carga', texto: `Baixe para ${fmtKg(proximo.alvo.carga)}` };
+  if (proximo.tipo === 'mini') return { segundos: proximo.descansoS, rotulo: 'Respire', texto: '3 a 5 respirações fundas' };
+  if (proximo.tipo === 'pausa') return { segundos: proximo.descansoS, rotulo: 'Pausa', texto: 'Solte a carga e volte' };
+  if (proximo.descansoS !== null) return { segundos: proximo.descansoS, rotulo: 'Descanso curto', texto: '30 a 45 s no FST-7' };
+  return { segundos: null, rotulo: 'Descanso', texto: '' };
+}
+
+/** 75 -> '1:15'. */
+export const relogio = (seg) => `${Math.floor(seg / 60)}:${String(Math.floor(seg % 60)).padStart(2, '0')}`;

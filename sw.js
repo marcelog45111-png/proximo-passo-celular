@@ -2,7 +2,7 @@
 // chegar sozinha; sem rede, a copia guardada. Os dados nunca passam por aqui:
 // a nuvem e a IA ficam de fora (outro endereco).
 
-const CACHE = 'pp-celular-v5';
+const CACHE = 'pp-celular-v7';
 const ARQUIVOS = [
   './', 'index.html', 'estilo.css', 'manifest.webmanifest', 'icone.png',
   'js/app.js', 'js/cifra.js', 'js/nuvem.js', 'js/dados.js', 'js/treino.js', 'js/garry.js', 'js/gerado/nutricao.js', 'js/movimento.js', 'js/barra3d.js', 'js/dom.js', 'js/jogo.js',

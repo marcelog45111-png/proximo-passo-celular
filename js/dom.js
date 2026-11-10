@@ -29,6 +29,7 @@ const CAMINHOS = {
   enviar: 'M12 19V5M5 12l7-7 7 7',
   fechar: 'M6 6l12 12M18 6L6 18',
   comecar: 'M8 5.5v13l11-6.5Z',
+  parar: 'M7 7h10v10H7Z',
   liberada: 'M8 11V7.5a4 4 0 0 1 7.6-1.7M6 11h12v9H6ZM12 14.5v2',
   seguir: 'M5 12h14M13 6l6 6-6 6',
 };
@@ -73,5 +74,5 @@ const ICONE_DO_VEREDITO = { carga: 'subir', reps: 'subir', igual: 'igual', abaix
 export function selo(v, classe = '') {
   if (!v) return null;
   const ic = ICONE_DO_VEREDITO[v.tipo];
-  return h('span', { class: `selo${classe ? ` ${classe}` : ''}`, 'data-tipo': v.tipo }, ic ? icone(ic) : null, h('span', { texto: v.tipo === 'nova' ? 'Base' : v.texto }));
+  return h('span', { class: `selo${classe ? ` ${classe}` : ''}`, 'data-tipo': v.tipo }, ic ? icone(ic) : null, h('span', { texto: v.tipo === 'nova' ? 'Primeiro' : v.texto }));
 }

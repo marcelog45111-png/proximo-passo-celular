@@ -368,7 +368,9 @@ button.serie:active { transform: none; opacity: 1; background: var(--cartao-2); 
 }
 @keyframes sobe-pilula { from { transform: translate(-50%, 18px); opacity: 0; } }
 .descanso-barra { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--marca); transform-origin: left; transition: transform 0.25s linear; }
-.descanso .pequeno { flex: 1; }
+.descanso .pequeno { flex: 1; display: grid; min-width: 0; line-height: 1.2; }
+.descanso-rotulo { font-weight: 650; color: var(--texto); }
+.descanso-texto { font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .descanso b { font-family: var(--numero); font-size: 1.62rem; font-weight: 700; line-height: 1; letter-spacing: -0.015em; min-width: 64px; }
 .descanso .botao { padding: 0 14px; border-radius: 16px; }
 .descanso[data-fim="sim"] { background: var(--marca); color: var(--sobre-tinta); }
@@ -486,13 +488,18 @@ dialog.jogo {
   --marca: linear-gradient(115deg, #39e27a, #5bd4e4); --vidro: rgba(19, 24, 22, 0.76);
   color-scheme: dark;
   border: 0; padding: 0; margin: 0; width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh;
-  color: var(--texto); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  color: var(--texto); overflow-x: hidden; overflow-y: auto; overscroll-behavior: none;
+  flex-direction: column;
   background:
     radial-gradient(90% 34% at 50% 24%, rgba(57, 226, 122, 0.15), transparent 72%),
     radial-gradient(60% 26% at 88% 20%, rgba(91, 212, 228, 0.11), transparent 72%),
     linear-gradient(180deg, #070a09, #0c1110 46%, #070a09);
 }
-dialog.jogo[open] { animation: sobe 0.38s cubic-bezier(0.32, 0.72, 0, 1); }
+dialog.jogo[open] { display: flex; animation: sobe 0.38s cubic-bezier(0.32, 0.72, 0, 1); }
+dialog.jogo > * { flex: none; }
+/* Com a serie aberta a pagina do treino fica presa: no iPhone ela rolava atras do dialog. */
+html.jogo-aberto, html.jogo-aberto body { overflow: hidden; overscroll-behavior: none; }
+html.jogo-aberto body { position: fixed; left: 0; right: 0; top: var(--preso-em, 0); }
 dialog.jogo::backdrop { background: #070a09; }
 .jogo-topo {
   display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 4px;
@@ -517,7 +524,8 @@ dialog.jogo::backdrop { background: #070a09; }
 .fase-pilula[data-estado="feita"][data-tipo="nova"] span { background: color-mix(in srgb, var(--ciano) 18%, transparent); color: var(--ciano); }
 .fase-pilula[data-estado="atual"] span { background: none; box-shadow: inset 0 0 0 1.5px var(--tinta); color: var(--tinta); }
 
-.jogo-palco { position: relative; height: clamp(84px, 16dvh, 150px); }
+/* A barra 3D e o que cede primeiro quando a tela e baixa: o resto da serie cabe sem rolar. */
+dialog.jogo > .jogo-palco { position: relative; flex: 0 1 clamp(84px, 16dvh, 150px); min-height: 46px; height: auto; }
 .jogo-cena { position: absolute; inset: 0; touch-action: pan-y; }
 .carimbo {
   position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 1px; text-align: center;
@@ -534,11 +542,11 @@ dialog.jogo::backdrop { background: #070a09; }
 .faisca { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: #39e27a; pointer-events: none; }
 .faisca:nth-of-type(odd) { background: #5bd4e4; }
 
-.jogo-descanso { padding: 4px 16px 0; max-width: 520px; margin: 0 auto; }
+.jogo-descanso { padding: 4px 16px 0; width: 100%; box-sizing: border-box; max-width: 520px; margin: 0 auto; }
 .jogo-descanso:empty { display: none; }
 .jogo-descanso .descanso { position: relative; left: auto; bottom: auto; transform: none; width: 100%; animation: none; box-shadow: none; background: var(--cartao); }
 
-.jogo-corpo { display: grid; gap: 10px; max-width: 520px; margin: 0 auto; padding: 8px 16px calc(var(--base) + 16px); }
+.jogo-corpo { display: grid; gap: 10px; width: 100%; box-sizing: border-box; max-width: 520px; margin: 0 auto; padding: 8px 16px calc(var(--base) + 16px); }
 .jogo-etapa { font-family: var(--numero); font-size: 1.7rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin: 0; font-variant-numeric: tabular-nums; }
 .jogo-etapa small { font-size: 0.6em; font-weight: 700; letter-spacing: 0; color: var(--texto-2); }
 .jogo-base, .jogo-meta {
@@ -553,6 +561,42 @@ dialog.jogo::backdrop { background: #070a09; }
 .jogo-meta { border: 1.5px solid transparent; padding: 10px 13px; background: linear-gradient(var(--cartao), var(--cartao)) padding-box, var(--marca) border-box; }
 .jogo-meta b { color: var(--tinta); }
 .jogo-meta p { grid-column: 2 / -1; margin: 0; font-size: 0.86rem; font-weight: 600; }
+/* O treino anterior mora dentro da meta, numa linha fina embaixo, com quando foi. */
+.jogo-meta .jogo-anterior {
+  grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
+  margin-top: 6px; padding-top: 7px; border-top: 0.5px solid var(--sep); font-weight: 500; color: var(--texto-2);
+}
+.jogo-meta .jogo-anterior > span:first-child { font-size: 0.76rem; font-weight: 600; color: var(--texto-3); }
+.jogo-meta .jogo-anterior b { font-size: 1rem; color: var(--texto); }
+.jogo-meta .jogo-anterior b.sem { font-size: 0.86rem; color: var(--texto-2); }
+.jogo-meta .jogo-anterior .jogo-quando { font-size: 0.8rem; }
+
+/* A regra do metodo ao lado do nome da serie: ate a meta (verde) ou ate a falha (laranja). */
+.jogo-etapa { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 6px; }
+.jogo-regra {
+  margin-left: auto; align-self: center; padding: 4px 10px; border-radius: 999px; font-family: -apple-system, system-ui, sans-serif;
+  font-size: 0.76rem; font-weight: 650; letter-spacing: 0; background: color-mix(in srgb, var(--tinta) 16%, transparent); color: var(--tinta);
+}
+.jogo-regra[data-ate="falha"] { background: color-mix(in srgb, var(--laranja) 18%, transparent); color: var(--laranja); }
+.jogo-como { margin: 0; font-size: 0.88rem; color: var(--texto-2); text-align: center; text-wrap: balance; }
+
+/* Preparar: a carga vem primeiro e grande, antes de tudo. */
+.passo-numero.carga.primeiro { grid-template-columns: 64px minmax(0, 1fr) 64px; padding: 0; }
+.passo-numero.carga.primeiro .passo-botao { height: 64px; border-radius: 20px; color: var(--tinta); }
+.passo-numero.carga.primeiro .passo-botao svg { width: 28px; height: 28px; }
+
+/* Contando: o relogio da serie no meio da tela e o Parar no lugar do Feito. */
+.jogo-contando { display: grid; justify-items: center; gap: 4px; padding: 6px 0 2px; }
+.jogo-relogio {
+  font-family: var(--numero); font-size: 5.4rem; font-weight: 800; line-height: 1; letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums; color: var(--texto);
+}
+.jogo-contando-linha { margin: 0; font-size: 1rem; color: var(--texto-2); }
+.jogo-contando-linha b { color: var(--texto); font-family: var(--numero); font-variant-numeric: tabular-nums; }
+.jogo-parar { background: #f3f7f4; color: #070a09; }
+.jogo-parar svg { fill: currentColor; }
+.jogo-durou { margin: 0; text-align: center; font-size: 0.9rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.jogo-durou b { color: var(--texto); font-family: var(--numero); }
 
 /* As repeticoes: o numero grande no meio, menos e mais do tamanho do polegar. */
 .passo-numero { display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px; align-items: center; gap: 10px; }
@@ -578,6 +622,8 @@ dialog.jogo::backdrop { background: #070a09; }
 .jogo-feito svg { width: 22px; height: 22px; stroke-width: 2.8; }
 .corta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jogo-acoes { display: flex; justify-content: space-between; gap: 8px; min-height: 44px; }
+/* Na primeira serie nao ha Desmarcar nem Encerrar: a linha vazia so empurrava a tela. */
+.jogo-acoes:not(:has(button)) { display: none; }
 
 /* O fim do exercicio: o resultado, serie por serie, e a conta da carga do proximo treino. */
 .jogo-etapa.fim { font-family: var(--display); font-size: 2.3rem; text-transform: uppercase; letter-spacing: 0.01em; line-height: 1; }
@@ -598,12 +644,27 @@ dialog.jogo::backdrop { background: #070a09; }
 .caixa-carga.liberada .caixa-grande { font-family: var(--numero); font-size: 1.5rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .caixa-icone { grid-row: 1 / span 3; position: relative; width: 46px; height: 46px; border-radius: 50%; background: rgba(4, 20, 10, 0.16); display: grid; place-items: center; }
 .caixa-icone svg { width: 24px; height: 24px; }
+/* Safari com as barras a mostra (390 x 664 num iPhone comum): tudo um pouco mais junto,
+   para a serie inteira, com o descanso, caber sem rolar. Botoes seguem >= 44 px. */
+@media (max-height: 780px) {
+  .jogo-corpo { gap: 6px; padding-top: 4px; padding-bottom: calc(var(--base) + 10px); }
+  .jogo-etapa { font-size: 1.5rem; }
+  .jogo-base, .jogo-meta { padding-top: 8px; padding-bottom: 8px; }
+  .campo-jogo.grande { height: 66px; font-size: 3.8rem; }
+  .passo-botao { height: 58px; }
+  .passo-numero.carga .passo-botao { height: 44px; }
+  .passo-numero.carga.primeiro .passo-botao { height: 58px; }
+  .jogo-relogio { font-size: 4.6rem; }
+  .campo-jogo { height: 40px; font-size: 1.7rem; }
+  .jogo-feito { min-height: 54px; }
+}
 /* Telas baixas (iPhone SE): a barra encolhe e as repeticoes ficam um pouco menores. */
 @media (max-height: 640px) {
-  .jogo-palco { height: 76px; }
-  .campo-jogo.grande { height: 62px; font-size: 3.4rem; }
-  .passo-botao { height: 54px; }
-  .jogo-corpo { gap: 8px; }
+  dialog.jogo > .jogo-palco { flex-basis: 64px; min-height: 44px; }
+  .campo-jogo.grande { height: 58px; font-size: 3.3rem; }
+  .passo-botao { height: 52px; }
+  .jogo-corpo { gap: 6px; }
+  .jogo-meta p { font-size: 0.8rem; }
 }
 
 
