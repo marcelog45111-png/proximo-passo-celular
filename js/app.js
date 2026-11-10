@@ -5,7 +5,7 @@ import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifr
 import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
-  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS,
+  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS, alinharSessao, analiseDoExercicio, seriesDeTrabalho, ajusteEntreSeries,
   resultadoDoExercicio, roteiro, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
 import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
@@ -321,7 +321,11 @@ function centrarDia(faixaAntes) {
 
 const planoTreino = () => lerPlanoTreino(app.estado.config.treinoPlano ?? '{"dias":[]}');
 const chaveSessao = (dia) => `treinoSessao:${dia}`;
-const sessaoDe = (dia) => lerSessao(app.estado.config[chaveSessao(dia)] ?? null) ?? { dia, treinoId: null, exercicios: {}, cardio: null, encerrados: [], atualizadoEm: '' };
+// A sessao do dia sempre alinhada ao roteiro de hoje (as linhas do aquecimento na frente).
+const sessaoDe = (dia) => alinharSessao(
+  lerSessao(app.estado.config[chaveSessao(dia)] ?? null) ?? { dia, treinoId: null, exercicios: {}, cardio: null, encerrados: [], semAquecimento: [], atualizadoEm: '' },
+  treinoDoDia(planoTreino(), diaDaSemana(dia)),
+);
 
 function gravarSessao(sessao) {
   sessao.atualizadoEm = new Date().toISOString();
@@ -378,12 +382,12 @@ function telaTreino() {
     return tela;
   }
 
-  const feitasDe = (e) => (sessao.exercicios[e.id] ?? []).filter((s) => s.reps > 0);
+  const feitasDe = (e) => seriesDeTrabalho(sessao.exercicios[e.id]);
   const feitasHoje = treino.exercicios.flatMap(feitasDe);
   const fechados = treino.exercicios.filter((e) => completoNaSessao(e, sessao));
   const completos = fechados.length;
   const total = treino.exercicios.length;
-  const totalSeries = treino.exercicios.reduce((n, e) => n + roteiro(e, (sessao.exercicios[e.id] ?? []).length).length, 0);
+  const totalSeries = treino.exercicios.reduce((n, e) => n + roteiro(e, (sessao.exercicios[e.id] ?? []).length).filter((p) => p.t !== 'a').length, 0);
   const fracao = total > 0 ? completos / total : 0;
   const fechado = total > 0 && completos === total;
   dadosDaBarra = dadosDaBarraDe(treino, sessao, dia);
@@ -440,7 +444,7 @@ function dadosDaBarraDe(treino, sessao, dia) {
     chave: `${treino.id}|${dia}`,
     placas: treino.exercicios.map((e) => ({
       id: e.id,
-      p: completoNaSessao(e, sessao) ? 1 : Math.min(0.95, (sessao.exercicios[e.id] ?? []).filter((s) => s.reps > 0).length / roteiro(e).length),
+      p: completoNaSessao(e, sessao) ? 1 : Math.min(0.95, seriesDeTrabalho(sessao.exercicios[e.id]).length / roteiro(e).filter((x) => x.t !== 'a').length),
     })),
   };
 }
@@ -470,6 +474,7 @@ function ligarPalco(tela) {
   movimento.rolagemDoPalco(palco, (p) => cenaDaBarra?.rolagem(p));
 }
 
+const CHANCE = { alta: 'Chance alta', media: 'Chance média', baixa: 'Chance baixa' };
 const quandoFoi = (ultima) => (ultima === null ? null : quandoRelativo(ultima.dia, hoje()));
 const rotuloDoExtra = (ex) => (ex.metodo === 'myo' ? 'Adicionar mini' : ex.metodo === 'restpause' ? 'Adicionar pausa' : ex.metodo === 'drop' ? 'Adicionar drop' : 'Adicionar série');
 
@@ -484,8 +489,11 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
   const lista = sessao.exercicios[ex.id] ?? [];
   const plano = planoDeHoje(ex, ultima, lista.length);
   const faixa = plano.faixa;
-  const validas = lista.filter((s) => s.reps > 0);
+  const validas = seriesDeTrabalho(lista);
   const completo = completoNaSessao(ex, sessao);
+  const pulouAquecimento = (sessao.semAquecimento ?? []).includes(ex.id);
+  const analise = analiseDoExercicio(ex, sessoes, dia);
+  const serieDeTrabalho = plano.passos.filter((p) => p.t !== 'a').length;
   const metodo = METODOS[ex.metodo] ?? null;
   const cartao = h('section', { class: `cartao exercicio${completo ? ' completo' : ''}${atual ? ' atual' : ''}`, 'aria-label': ex.nome, 'data-ex': ex.id });
 
@@ -513,22 +521,61 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     return cartao;
   }
 
+  // Os que ainda vem depois comecam minimizados (10/11/2026, 'todas as series, menos a primeira,
+  // comecem minimizadas'): so o nome, a meta de hoje e a chance de evoluir. Tocar abre.
+  if (!completo && !atual && !app.abertos.has(ex.id)) {
+    const trabalho = plano.passos.filter((p) => !p.t);
+    const cargaMeta = trabalho[0]?.alvo.carga ?? 0;
+    cartao.classList.add('fechado', 'minimizado');
+    cartao.append(h('button', {
+      class: 'ex-resumo', 'aria-expanded': 'false',
+      'aria-label': `${ex.nome}: ${trabalho.length} séries, meta ${kg(cargaMeta)}${analise.chance ? `, chance de evoluir hoje ${analise.chance.nivel}` : ''}. Abrir`,
+      onclick: () => { app.efeito = { ex: ex.id, abriu: true, altura: cartao.offsetHeight }; app.abertos.add(ex.id); desenhar(); },
+    },
+    h('span', { class: 'ex-num-mini', 'aria-hidden': 'true', texto: String(indice + 1).padStart(2, '0') }),
+    h('span', { class: 'ex-resumo-texto' },
+      h('span', { class: 'ex-resumo-nome', texto: ex.nome }),
+      h('span', { class: 'ex-resumo-meta', texto: `${trabalho.length} × ${numeroBr(cargaMeta)} kg · ${trabalho.map((p) => p.alvo.reps).join(', ')} reps${metodo ? ` · ${metodo.nome}` : ''}` })),
+    h('span', { class: 'ex-resumo-lado' },
+      analise.chance ? h('span', { class: 'chance', 'data-nivel': analise.chance.nivel, texto: CHANCE[analise.chance.nivel] }) : null,
+      icone('baixo'))));
+    return cartao;
+  }
+
   cartao.append(h('div', { class: 'ex-topo' },
     h('span', { class: 'ex-num', 'aria-hidden': 'true', texto: String(indice + 1).padStart(2, '0') }),
     h('h3', { class: 'ex-nome', texto: ex.nome }),
     h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
   if (metodo) cartao.append(h('p', { class: 'ex-metodo' }, h('b', { texto: metodo.nome }), ` ${metodo.resumo}`));
   if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
-  if (ex.aquecimento.length > 0) cartao.append(h('p', { class: 'ex-linha', texto: `Aquecimento: ${ex.aquecimento.map((s) => `${kg(s.carga)}×${s.reps}`).join(' · ')}` }));
   cartao.append(h('p', { class: 'sugestao', 'data-tipo': plano.tipo }, plano.tipo === 'subir' ? icone('liberada') : null, h('span', { texto: plano.tipo === 'subir' ? `Carga liberada. ${plano.texto}` : plano.texto })));
 
   if (ultima) cartao.append(h('p', { class: 'ex-linha', texto: `Treino anterior: ${quandoFoi(ultima)}` }));
+  // A leitura da evolucao: a chance de evoluir hoje e o que fazer (analiseDoExercicio).
+  if (validas.length === 0 && analise.recomendacao.tipo !== 'subir') {
+    cartao.append(h('div', { class: 'ex-analise', 'data-tipo': analise.recomendacao.tipo },
+      analise.chance ? h('span', { class: 'chance', 'data-nivel': analise.chance.nivel, texto: `${CHANCE[analise.chance.nivel]} de evoluir hoje` }) : null,
+      h('p', { texto: analise.recomendacao.texto })));
+  }
   // Todas as series de uma vez: Serie | Anterior (o treino anterior) | Hoje (a meta, ou o que foi feito) | marca.
   const series = h('div', { class: 'series', role: 'group', 'aria-label': `Séries de ${ex.nome}` },
     h('div', { class: 'serie cabecalho', 'aria-hidden': 'true' },
       h('span', { texto: 'Série' }), h('span', { texto: 'Anterior' }), h('span', { texto: 'Hoje' }), h('span')));
   plano.passos.forEach((passo, i) => {
     const f = lista[i] && lista[i].reps > 0 ? lista[i] : null;
+    if (passo.t === 'a') {
+      // O aquecimento aparece na tabela, apagado: nao tem treino anterior nem conta.
+      series.append(h('button', {
+        class: `serie aquecimento${f ? ' feita' : ''}`, 'data-chave': `${ex.id}|${i}`,
+        'aria-label': `${passo.rotulo}: ${f ? `feito ${kg(f.carga)} vezes ${f.reps}` : pulouAquecimento ? 'pulado' : `${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}`}`,
+        onclick: () => jogar(ex.id, i),
+      },
+      h('span', { class: 'n', texto: passo.curto }),
+      h('span', { class: 'anterior', texto: 'aquec.' }),
+      h('span', { class: f ? 'hoje' : 'meta', texto: f ? `${numeroBr(f.carga)} × ${f.reps}` : `${numeroBr(passo.alvo.carga)} × ${passo.alvo.reps}` }),
+      h('span', { class: 'selo vazio' }, h('span', { texto: f ? 'feito' : pulouAquecimento ? 'pulado' : 'leve' }))));
+      return;
+    }
     const v = f ? veredito(f, passo.base) : null;
     const base = passo.base ? `${numeroBr(passo.base.carga)} × ${passo.base.reps}` : '—';
     const alvo = `${numeroBr(passo.alvo.carga)} × ${passo.alvo.reps}`;
@@ -547,14 +594,14 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
   });
   cartao.append(series);
 
-  const falta = plano.passos.findIndex((_, i) => !(lista[i] && lista[i].reps > 0));
-  if (falta !== -1 && !(completo && validas.length >= roteiro(ex).length)) {
+  const falta = plano.passos.findIndex((p, i) => !(lista[i] && lista[i].reps > 0) && !(p.t === 'a' && (pulouAquecimento || validas.length > 0)));
+  if (falta !== -1 && !(completo && validas.length >= serieDeTrabalho)) {
     cartao.append(h('button', { class: `botao cheio comecar${atual ? ' principal' : ''}`, onclick: () => jogar(ex.id, null) },
-      icone('comecar'), validas.length === 0 ? 'Começar' : `Continuar: ${plano.passos[falta].rotulo}`));
+      icone('comecar'), validas.length === 0 && plano.passos[falta].t === 'a' ? 'Começar pelo aquecimento' : validas.length === 0 && !lista.some((x) => x.reps > 0) ? 'Começar' : `Continuar: ${plano.passos[falta].rotulo}`));
   }
   cartao.append(h('div', { class: 'ex-acoes' },
     h('button', { class: 'botao texto', onclick: () => { adicionarSerie(ex, treinoId); desenhar(); }, texto: rotuloDoExtra(ex) }),
-    completo ? h('button', { class: 'botao texto', onclick: () => { app.abertos.delete(ex.id); desenhar(); }, texto: 'Recolher' }) : null,
+    completo || !atual ? h('button', { class: 'botao texto', onclick: () => { app.abertos.delete(ex.id); desenhar(); }, texto: 'Recolher' }) : null,
     h('button', { class: 'botao texto', onclick: () => abrirHistorico(ex), texto: 'Histórico' })));
   return cartao;
 }
@@ -574,6 +621,15 @@ function partidaDe(exId, comecarEm) {
     gravar: (i, valor) => gravarSerie(ex, i, valor, treino.id),
     desmarcar: (i) => gravarSerie(ex, i, { carga: listaDe()[i]?.carga ?? 0, reps: 0 }, treino.id),
     encerrar: () => marcarEncerrado(ex.id, true),
+    analise: analiseDoExercicio(ex, sessoesDoConfig(app.estado.config), hoje()),
+    ajuste: (feita) => ajusteEntreSeries(ex, feita),
+    semAquecimento: () => (sessaoDe(hoje()).semAquecimento ?? []).includes(ex.id),
+    pularAquecimento: () => {
+      const s = sessaoDe(hoje());
+      if (!s.semAquecimento.includes(ex.id)) s.semAquecimento.push(ex.id);
+      s.treinoId = treino.id;
+      gravarSessao(s);
+    },
     reabrir: () => marcarEncerrado(ex.id, false),
     adicionar: () => adicionarSerie(ex, treino.id),
     descansar: (segundos, rotulo, texto) => comecarDescanso(segundos, rotulo, texto),
@@ -751,7 +807,7 @@ function folha(titulo, corpo, { acao = null, aoFechar = null } = {}) {
 
 function abrirHistorico(ex) {
   const linhas = sessoesDoConfig(app.estado.config)
-    .map((s) => ({ dia: s.dia, series: (s.exercicios[ex.id] ?? []).filter((x) => x.reps > 0) }))
+    .map((s) => ({ dia: s.dia, series: seriesDeTrabalho(s.exercicios[ex.id]) }))
     .filter((s) => s.series.length > 0)
     .slice(0, 15);
   const melhor = linhas.flatMap((l) => l.series).reduce((m, s) => (m === null || s.carga > m.carga || (s.carga === m.carga && s.reps > m.reps) ? s : m), null);
@@ -1055,7 +1111,9 @@ function contextoDoGarry() {
           regraDaCarga: `sobe com ${regraDaCarga(ex)}`,
           ultimaVez: u ? `${u.dia ?? 'anotado'}: ${textoDasSeries(u.series)}` : null,
           sugestao: sugestao(ex, u).texto,
-          feitoHoje: textoDasSeries((sessao.exercicios[ex.id] ?? []).filter((s) => s.reps > 0)) || null,
+          feitoHoje: textoDasSeries(seriesDeTrabalho(sessao.exercicios[ex.id])) || null,
+          aquecimento: roteiro(ex).filter((p) => p.t === 'a').length || undefined,
+          evolucao: (() => { const a = analiseDoExercicio(ex, sessoes, dia); return { chanceDeEvoluirHoje: a.chance ? `${a.chance.nivel} (${a.chance.motivo})` : null, recomendacao: a.recomendacao.texto, treinosSemRecorde: a.estagnado, tendencia: a.tendencia ? `${a.tendencia.direcao}, ${a.tendencia.kgSemana} kg/semana na força estimada` : null }; })(),
         };
       }),
     },
@@ -1063,7 +1121,7 @@ function contextoDoGarry() {
     ultimosTreinos: sessoes.slice(0, 6).map((s) => ({
       dia: s.dia,
       treino: plano.dias.find((d) => d.id === s.treinoId)?.nome ?? null,
-      series: Object.values(s.exercicios).flat().filter((x) => x.reps > 0).length,
+      series: Object.values(s.exercicios).flat().filter((x) => x.reps > 0 && x.t !== 'a').length,
       volumeKg: Math.round(volume(Object.values(s.exercicios).flat().filter((x) => x.reps > 0))),
       cardio: s.cardio,
     })),

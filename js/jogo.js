@@ -12,6 +12,7 @@ import { intervaloAntes, METODOS, planoDeHoje, regraDaCarga, regraDaSerie, relog
 import * as movimento from './movimento.js';
 
 const kg = (v) => `${numeroBr(v)} kg`;
+const CHANCE = { alta: 'Chance alta', media: 'Chance média', baixa: 'Chance baixa' };
 const reps = (n) => `${n} ${Math.abs(n) === 1 ? 'rep' : 'reps'}`;
 
 let aberto = null;
@@ -87,20 +88,25 @@ export function abrirJogo(partida, aoFechar) {
     d.close();
   }
   const feita = (lista, i) => (lista[i] && lista[i].reps > 0 ? lista[i] : null);
+  // Aquecimento pulado nao e pendente: o roteiro segue para as series de trabalho.
   const pendenteDepoisDe = (passos, lista, de) => {
-    for (let i = de; i < passos.length; i += 1) if (feita(lista, i) === null) return i;
-    for (let i = 0; i < de; i += 1) if (feita(lista, i) === null) return i;
+    // e depois que uma serie de trabalho foi feita, aquecer ja nao faz sentido.
+    const trabalhou = lista.some((x, k) => x.reps > 0 && passos[k]?.t !== 'a');
+    const falta = (i) => feita(lista, i) === null && !(passos[i]?.t === 'a' && (trabalhou || o.semAquecimento?.()));
+    for (let i = de; i < passos.length; i += 1) if (falta(i)) return i;
+    for (let i = 0; i < de; i += 1) if (falta(i)) return i;
     return -1;
   };
 
   function desenharFases(passos, lista, atual) {
     fases.replaceChildren(...passos.map((p, i) => {
       const f = feita(lista, i);
-      const v = f ? veredito(f, p.base) : null;
+      const v = f && p.t !== 'a' ? veredito(f, p.base) : null;
+      const pulada = p.t === 'a' && !f && o.semAquecimento?.();
       return h('li', {}, h('button', {
-        class: 'fase-pilula', 'data-estado': i === atual ? 'atual' : f ? 'feita' : 'pendente', 'data-tipo': v?.tipo ?? null,
+        class: `fase-pilula${p.t === 'a' ? ' aquecimento' : ''}`, 'data-estado': i === atual ? 'atual' : f ? 'feita' : pulada ? 'pulada' : 'pendente', 'data-tipo': v?.tipo ?? (f ? 'igual' : null),
         'aria-current': i === atual ? 'step' : null,
-        'aria-label': `${p.rotulo}${f ? `: ${kg(f.carga)} × ${f.reps}, ${v.tipo === 'nova' ? 'primeiro registro' : v.texto}` : ''}`,
+        'aria-label': `${p.rotulo}${f ? `: ${kg(f.carga)} × ${f.reps}${v ? `, ${v.tipo === 'nova' ? 'primeiro registro' : v.texto}` : ''}` : pulada ? ': pulado' : ''}`,
         onclick: () => mostrarPasso(i, i < atual ? -1 : 1),
       }, h('span', { texto: p.curto })));
     }));
@@ -123,8 +129,18 @@ export function abrirJogo(partida, aoFechar) {
     const regra = regraDaSerie(o.ex, passo, proximoPasso);
     const ja = feita(lista, i);
     // A carga ja usada hoje vale mais que a do plano (drop e a carga propria dele).
-    const cargaDeHoje = passo.t === 'd' ? null : [...lista].reverse().find((s) => s.reps > 0 && !s.t)?.carga ?? null;
-    if (!valores.has(i)) valores.set(i, ja ? { carga: ja.carga, reps: ja.reps, seg: ja.seg ?? 0 } : { carga: cargaDeHoje ?? passo.alvo.carga, reps: passo.alvo.reps, seg: 0 });
+    const aquecendo = passo.t === 'a';
+    // Autorregulacao (ajusteEntreSeries): a ultima serie de trabalho feita antes desta mostrou carga
+    // leve ou pesada demais? Esta ja vem corrigida, com o motivo. Sai do que esta gravado, entao
+    // vale tambem depois de fechar e abrir a tela.
+    const anteriorFeita = (() => { for (let k = i - 1; k >= 0; k -= 1) if (lista[k]?.reps > 0 && !lista[k].t && !pl.passos[k]?.t) return lista[k]; return null; })();
+    const ajuste = ja || passo.t ? null : o.ajuste?.(anteriorFeita) ?? null;
+    const cargaDeHoje = passo.t === 'd' || aquecendo ? null : ajuste?.carga ?? [...lista].reverse().find((s) => s.reps > 0 && !s.t)?.carga ?? null;
+    // Com a carga corrigida no meio do exercicio, a meta acompanha: a carga nova, no comeco da faixa.
+    const alvo = ajuste ? { carga: ajuste.carga, reps: pl.faixa.min } : passo.alvo;
+    const dicaDoPasso = ajuste ? `Carga ajustada hoje: qualquer número de ${pl.faixa.min} a ${pl.faixa.max} reps vale.` : passo.dica;
+    if (!valores.has(i)) valores.set(i, ja ? { carga: ja.carga, reps: ja.reps, seg: ja.seg ?? 0 } : { carga: cargaDeHoje ?? alvo.carga, reps: alvo.reps, seg: 0 });
+    const primeiraDeTrabalho = !aquecendo && !passo.t && pl.passos.findIndex((p) => p.t !== 'a') === i;
     const valor = valores.get(i);
     const doTipo = pl.passos.filter((p) => p.tipo === passo.tipo).length;
     const fase = ja || medida?.i === i ? 'anotar' : contando?.i === i ? 'contando' : 'preparar';
@@ -132,6 +148,7 @@ export function abrirJogo(partida, aoFechar) {
 
     const aoVivo = h('div', { class: 'ao-vivo', 'aria-live': 'polite' });
     const acertarAoVivo = () => {
+      if (aquecendo) { aoVivo.replaceChildren(h('span', { class: 'selo' }, h('span', { texto: 'Aquecimento: não conta' }))); return; }
       const v = veredito(valor, passo.base);
       aoVivo.replaceChildren(passo.base === null
         ? h('span', { class: 'selo', 'data-tipo': 'nova' }, h('span', { texto: 'Primeiro registro' }))
@@ -179,7 +196,9 @@ export function abrirJogo(partida, aoFechar) {
       const depois = plano();
       const listaDepois = o.feitas();
       const proximo = pendenteDepoisDe(depois.passos, listaDepois, i + 1);
-      if (!ja) estampar(veredito(valor, passo.base), passo, valor, pl.faixa);
+      if (!ja && !aquecendo) estampar(veredito(valor, passo.base), passo, valor, pl.faixa);
+      // A proxima serie de trabalho recalcula a carga pelo que acabou de ser gravado.
+      if (!ja && !aquecendo && !passo.t) { const seguinte = depois.passos.findIndex((p, k) => k > i && !p.t && feita(listaDepois, k) === null); if (seguinte !== -1) valores.delete(seguinte); }
       if (!ja) {
         // Descanso so quando o exercicio (ou o metodo) define um; pelo feeling, nenhum cronometro.
         const pausa = intervaloAntes(proximo === -1 ? null : depois.passos[proximo], o.ex);
@@ -193,20 +212,27 @@ export function abrirJogo(partida, aoFechar) {
     };
 
     // A meta e o treino anterior num cartao so: o que vale hoje em cima, a referencia embaixo.
-    const anterior = passo.base
+    const anterior = aquecendo ? null : passo.base
       ? h('p', { class: 'jogo-anterior' }, h('span', { texto: 'Treino anterior' }), h('b', { texto: `${kg(passo.base.carga)} × ${passo.base.reps}` }), h('span', { class: 'jogo-quando', texto: o.quando ?? '' }), passo.base.seg ? h('span', { class: 'jogo-quando', texto: `em ${relogio(passo.base.seg)}` }) : null)
       : h('p', { class: 'jogo-anterior' }, h('span', { texto: 'Treino anterior' }), h('b', { class: 'sem', texto: 'ainda não tem' }));
-    const cartaoMeta = h('div', { class: 'jogo-meta', 'data-tipo': pl.tipo },
-      h('span', { class: 'jogo-rotulo', texto: 'Meta' }),
-      h('b', { texto: `${kg(passo.alvo.carga)} × ${passo.alvo.reps}` }),
-      h('p', { texto: passo.dica }),
-      anterior);
+    // Antes da primeira serie de trabalho: a chance de evoluir hoje e o porque (analiseDoExercicio).
+    const analise = o.analise ?? null;
+    const chance = primeiraDeTrabalho && !ja && analise?.chance
+      ? h('p', { class: 'jogo-chance' }, h('span', { class: 'chance', 'data-nivel': analise.chance.nivel, texto: CHANCE[analise.chance.nivel] }), h('span', { texto: analise.recomendacao.texto }))
+      : null;
+    const cartaoMeta = h('div', { class: 'jogo-meta', 'data-tipo': aquecendo ? 'aquecimento' : pl.tipo },
+      h('span', { class: 'jogo-rotulo', texto: aquecendo ? 'Leve' : 'Meta' }),
+      h('b', { texto: `${kg(alvo.carga)} × ${alvo.reps}` }),
+      h('p', { texto: dicaDoPasso }),
+      anterior,
+      chance);
+    const avisoDeAjuste = ajuste ? h('p', { class: 'jogo-ajuste', role: 'status' }, icone(ajuste.carga > (lista.findLast?.((x) => x.reps > 0 && !x.t)?.carga ?? 0) ? 'subir' : 'descer'), ajuste.texto) : null;
     const titulo = h('h2', { class: 'jogo-etapa' }, passo.rotulo, doTipo > 1 ? h('small', { texto: ` de ${doTipo}` }) : null,
       h('span', { class: 'jogo-regra', 'data-ate': regra.ate, texto: regra.curto }));
 
     // O tipo da serie e a execucao anotada no plano (ex.: 'Lento'), sempre a mostra.
     const tipoDaSerie = () => h('div', { class: 'jogo-tipo' },
-      h('span', { class: 'tipo-chip', texto: `${METODOS[o.ex.metodo]?.nome ?? 'Série normal'}${passo.tipo !== 'serie' ? ` · ${passo.rotulo}` : ''}` }),
+      h('span', { class: 'tipo-chip', texto: aquecendo ? 'Aquecimento · não conta' : `${METODOS[o.ex.metodo]?.nome ?? 'Série normal'}${passo.tipo !== 'serie' ? ` · ${passo.rotulo}` : ''}` }),
       o.ex.nota ? h('span', { class: 'tipo-chip nota' }, h('small', { texto: 'Execução' }), o.ex.nota) : null);
     const comoFazer = regra.durante && regra.durante !== o.ex.nota ? h('p', { class: 'jogo-como', texto: regra.durante }) : null;
 
@@ -215,7 +241,13 @@ export function abrirJogo(partida, aoFechar) {
       fase === 'preparar' ? h('button', { class: 'botao texto', onclick: semRelogio, texto: 'Anotar sem cronômetro' })
         : ja ? h('button', { class: 'botao texto', onclick: () => { o.desmarcar(i); mudou = true; valores.delete(i); o.cena?.atualizar(); mostrarPasso(i, 1); }, texto: 'Desmarcar' })
           : fase === 'anotar' && valor.seg > 0 ? h('button', { class: 'botao texto', onclick: () => { medida = null; valor.seg = 0; mostrarPasso(i, 0); }, texto: 'Medir de novo' }) : h('span'),
-      algumFeito && fase !== 'contando' ? h('button', {
+      aquecendo && !ja && fase !== 'contando' ? h('button', {
+        class: 'botao texto', onclick: () => {
+          o.pularAquecimento?.();
+          const k = pendenteDepoisDe(plano().passos, o.feitas(), i);
+          if (k === -1) mostrarFim(); else mostrarPasso(k, 1);
+        }, texto: 'Pular aquecimento',
+      }) : algumFeito && fase !== 'contando' ? h('button', {
         class: 'botao texto', onclick: () => { o.encerrar(); mudou = true; o.cena?.atualizar(); mostrarFim(); }, texto: 'Encerrar exercício',
       }) : null);
 
@@ -223,6 +255,7 @@ export function abrirJogo(partida, aoFechar) {
       corpo.dataset.fase = 'preparar';
       trocarCorpo(
         titulo,
+        avisoDeAjuste,
         cartaoMeta,
         numero('carga primeiro', 'kg', campoCarga, 'carga', 'um quilo'),
         tipoDaSerie(),
@@ -241,8 +274,8 @@ export function abrirJogo(partida, aoFechar) {
           tempo,
           // A meta grande enquanto a serie roda (10/11/2026: 'a meta 13 reps grande pq ele ta escondendo').
           h('div', { class: 'jogo-alvo', 'data-ate': regra.ate },
-            h('span', { class: 'jogo-rotulo', texto: regra.ate === 'falha' ? 'Até a falha' : 'Meta' }),
-            h('b', {}, String(passo.alvo.reps), h('small', { texto: ' reps' })),
+            h('span', { class: 'jogo-rotulo', texto: regra.ate === 'falha' ? 'Até a falha' : aquecendo ? 'Aquecimento' : 'Meta' }),
+            h('b', {}, String(alvo.reps), h('small', { texto: ' reps' })),
             h('span', { class: 'jogo-alvo-carga', texto: `com ${kg(valor.carga)}` })),
           tipoDaSerie(),
           comoFazer),
@@ -292,7 +325,7 @@ export function abrirJogo(partida, aoFechar) {
     desenharFases(pl.passos, lista, -1);
     const r = resultadoDoExercicio(o.ex, lista, o.ultima);
     const proximo = o.proximo();
-    const linhas = pl.passos.map((p, i) => ({ p, f: feita(lista, i) })).filter((x) => x.f !== null);
+    const linhas = pl.passos.map((p, i) => ({ p, f: feita(lista, i) })).filter((x) => x.f !== null && x.p.t !== 'a');
     const cargas = linhas.filter((x) => !x.p.t).map((x) => x.f.carga);
     let caixa = null;
     if (r !== null && r.liberou !== null) {
