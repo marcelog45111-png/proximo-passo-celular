@@ -49,6 +49,9 @@ function lerExercicio(e) {
     series: Math.min(10, Math.max(1, Math.round(numero(e.series, 3)))),
     metodo,
     drops: metodo === 'drop' ? Math.min(4, Math.max(1, Math.round(numero(e.drops, METODOS.drop.drops)))) : 0,
+    // Descanso entre as series deste exercicio, escolhido no Editar treino (10/11/2026). null = pelo
+    // feeling: sem cronometro. Os intervalos do metodo (drop, myo, rest-pause, FST-7) valem sempre.
+    descansoS: numero(e.descansoS) !== null && e.descansoS >= 15 && e.descansoS <= 600 ? Math.round(e.descansoS) : null,
     nota: typeof e.nota === 'string' ? e.nota : '',
     aquecimento: Array.isArray(e.aquecimento) ? e.aquecimento.map(serie).filter((s) => s.reps > 0) : [],
     referencia: e.referencia && typeof e.referencia === 'object'
@@ -391,7 +394,7 @@ const partesDoDia = (dia) => { const [a, m, d] = dia.split('-').map(Number); ret
  * se e drop, myo etc, tem que esse sistema com regras"). A serie e medida do
  * "Comecar" ao "Parar"; o que muda com o metodo e ATE ONDE ir e o que vem DEPOIS.
  *
- *  - serie comum: ate a meta de repeticoes; depois, o descanso dos Ajustes;
+ *  - serie comum: ate a meta de repeticoes; depois, o descanso do exercicio (ou nenhum: pelo feeling);
  *  - FST-7: ate a meta, mesma carga nas 7; entre elas so 30 a 45 s (40);
  *  - drop set: as series de trabalho ate a meta; a ultima e cada drop ate a falha;
  *    entre elas nao ha descanso, so 10 s para baixar a carga;
@@ -400,7 +403,7 @@ const partesDoDia = (dia) => { const [a, m, d] = dia.split('-').map(Number); ret
  *  - rest-pause: a principal ate a falha; pausas de 20 s e de novo ate a falha.
  *
  * regraDaSerie -> { ate: 'meta' | 'falha', curto, durante }
- * intervaloAntes(proximo) -> { segundos (null = Ajustes), rotulo, texto }
+ * intervaloAntes(proximo, exercicio) -> { segundos (null = sem cronometro: o descanso do exercicio e pelo feeling), rotulo, texto }
  */
 export const TROCA_DE_CARGA_S = 10;
 
@@ -420,13 +423,17 @@ export function regraDaSerie(exercicio, passo, proximo = null) {
   return { ate: 'meta', curto: 'Até a meta', durante: exercicio.nota };
 }
 
-export function intervaloAntes(proximo) {
-  if (proximo === null) return { segundos: null, rotulo: 'Descanso', texto: '' };
+export const DESCANSOS = [45, 60, 90, 120, 150, 180, 240, 300];
+
+/** O intervalo antes do proximo passo (null = acabou o exercicio). segundos null = sem cronometro. */
+export function intervaloAntes(proximo, exercicio = null) {
+  const doExercicio = { segundos: exercicio?.descansoS ?? null, rotulo: 'Descanso', texto: '' };
+  if (proximo === null) return doExercicio;
   if (proximo.tipo === 'drop') return { segundos: TROCA_DE_CARGA_S, rotulo: 'Troca de carga', texto: `Baixe para ${fmtKg(proximo.alvo.carga)}` };
   if (proximo.tipo === 'mini') return { segundos: proximo.descansoS, rotulo: 'Respire', texto: '3 a 5 respirações fundas' };
   if (proximo.tipo === 'pausa') return { segundos: proximo.descansoS, rotulo: 'Pausa', texto: 'Solte a carga e volte' };
   if (proximo.descansoS !== null) return { segundos: proximo.descansoS, rotulo: 'Descanso curto', texto: '30 a 45 s no FST-7' };
-  return { segundos: null, rotulo: 'Descanso', texto: '' };
+  return doExercicio;
 }
 
 /** 75 -> '1:15'. */

@@ -5,7 +5,7 @@ import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifr
 import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
-  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga,
+  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS,
   resultadoDoExercicio, roteiro, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
 import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
@@ -65,7 +65,6 @@ const app = {
   diaTreino: null,
   abertos: new Set(), // exercicios fechados que a pessoa reabriu
   efeito: null, // o que acabou de mudar e merece animar depois do proximo desenho
-  descansoS: guardado.ler('descanso', 90),
 };
 
 const salvarEstado = () => guardado.gravar('estado', app.estado);
@@ -577,7 +576,7 @@ function partidaDe(exId, comecarEm) {
     encerrar: () => marcarEncerrado(ex.id, true),
     reabrir: () => marcarEncerrado(ex.id, false),
     adicionar: () => adicionarSerie(ex, treino.id),
-    descansar: (segundos, rotulo, texto) => comecarDescanso(segundos ?? app.descansoS, rotulo, texto),
+    descansar: (segundos, rotulo, texto) => comecarDescanso(segundos, rotulo, texto),
     pararDescanso,
     cena: {
       montar: (host) => cenaDaBarra?.montarEm(host),
@@ -668,29 +667,40 @@ function cartaoCardio(sessao) {
 // descanso entre as series
 
 let descanso = null;
-function comecarDescanso(segundos = app.descansoS, rotulo = 'Descanso', texto = '') {
+// O descanso conta para baixo e, quando acaba, NAO some (10/11/2026, "caso supere o descanso o
+// app comeca a dar aviso vermelho"): fica vermelho e conta o quanto passou, ate a proxima serie
+// comecar ou a pessoa tocar em Pular. Apita ao acabar e a cada 30 s passados.
+function comecarDescanso(segundos, rotulo = 'Descanso', texto = '') {
   pararDescanso();
-  const fim = Date.now() + segundos * 1000;
   const el = h('div', { class: 'descanso', role: 'timer', 'aria-live': 'off' });
   const tempo = h('b');
+  const nomeEl = h('span', { class: 'descanso-rotulo', texto: rotulo });
+  const textoEl = h('span', { class: 'descanso-texto', texto });
   const barra = h('i', { class: 'descanso-barra', 'aria-hidden': 'true' });
+  const mais = h('button', { class: 'botao', onclick: () => { descansoFim = Math.max(descansoFim, Date.now()) + 30_000; descansoTotal += 30_000; apitos = 0; }, texto: '+30s' });
   el.dataset.rotulo = rotulo;
-  el.append(tempo, h('span', { class: 'pequeno' }, h('span', { class: 'descanso-rotulo', texto: rotulo }), texto ? h('span', { class: 'descanso-texto', texto }) : null),
-    h('button', { class: 'botao', onclick: () => { descansoFim += 30_000; descansoTotal += 30_000; }, texto: '+30s' }),
+  el.append(tempo, h('span', { class: 'pequeno' }, nomeEl, textoEl), mais,
     h('button', { class: 'botao', onclick: pararDescanso, texto: 'Pular' }), barra);
-  let descansoFim = fim;
+  let descansoFim = Date.now() + segundos * 1000;
   let descansoTotal = segundos * 1000;
+  let apitos = 0;
   const tique = () => {
     const resta = Math.ceil((descansoFim - Date.now()) / 1000);
     barra.style.transform = `scaleX(${Math.max(0, (descansoFim - Date.now()) / descansoTotal)})`;
     if (resta <= 0) {
-      el.dataset.fim = 'sim';
-      tempo.textContent = 'Bora!';
-      apito();
-      clearInterval(descanso.relogio);
-      descanso.relogio = null;
-      setTimeout(pararDescanso, 4000);
+      const passou = Math.floor((Date.now() - descansoFim) / 1000);
+      el.dataset.passou = 'sim';
+      tempo.textContent = `+${Math.floor(passou / 60)}:${String(passou % 60).padStart(2, '0')}`;
+      nomeEl.textContent = 'Passou do descanso';
+      textoEl.textContent = `Combinado: ${Math.floor(descansoTotal / 60000)}:${String(Math.round(descansoTotal / 1000) % 60).padStart(2, '0')}`;
+      const devidos = 1 + Math.floor(passou / 30);
+      if (apitos < devidos) { apitos = devidos; apito(); }
       return;
+    }
+    if (el.dataset.passou) {
+      delete el.dataset.passou;
+      nomeEl.textContent = rotulo;
+      textoEl.textContent = texto;
     }
     tempo.textContent = `${Math.floor(resta / 60)}:${String(resta % 60).padStart(2, '0')}`;
   };
@@ -786,6 +796,11 @@ function abrirEditor(diaSemana) {
         h('option', { value: '', selected: ex.metodo ? null : true, texto: 'Séries normais' }),
         Object.entries(METODOS).map(([id, m]) => h('option', { value: id, selected: ex.metodo === id ? true : null, texto: m.nome })));
       const drops = h('input', { class: 'campo', inputmode: 'numeric', value: ex.drops || METODOS.drop.drops });
+      // O descanso entre as series e deste exercicio: sem escolher, e pelo feeling (sem cronometro).
+      const descansoEx = h('select', { class: 'campo', 'aria-label': 'Descanso entre séries' },
+        h('option', { value: '', selected: ex.descansoS ? null : true, texto: 'Pelo feeling' }),
+        DESCANSOS.map((seg) => h('option', { value: String(seg), selected: ex.descansoS === seg ? true : null, texto: relogio(seg) })));
+      descansoEx.addEventListener('change', () => { ex.descansoS = descansoEx.value ? Number(descansoEx.value) : null; explica.textContent = regra(); });
       metodo.addEventListener('change', () => {
         ler();
         ex.metodo = metodo.value || null;
@@ -793,7 +808,7 @@ function abrirEditor(diaSemana) {
         ex.drops = ex.metodo === 'drop' ? METODOS.drop.drops : 0;
         redesenhar();
       });
-      const regra = () => { const lido = lerPlanoTreino({ dias: [{ id: 'x', diaSemana: 1, exercicios: [{ ...ex, nome: ex.nome || 'x' }] }] }).dias[0].exercicios[0]; return `${METODOS[ex.metodo]?.resumo ?? 'Uma série de cada vez, com o descanso dos Ajustes.'} A carga sobe com ${regraDaCarga(lido)}.`; };
+      const regra = () => { const lido = lerPlanoTreino({ dias: [{ id: 'x', diaSemana: 1, exercicios: [{ ...ex, nome: ex.nome || 'x' }] }] }).dias[0].exercicios[0]; return `${METODOS[ex.metodo]?.resumo ?? 'Uma série de cada vez.'} Descanso entre as séries: ${ex.descansoS ? relogio(ex.descansoS) : 'pelo feeling, sem cronômetro'}. A carga sobe com ${regraDaCarga(lido)}.`; };
       const explica = h('p', { class: 'ed-explica' });
       const ler = () => {
         ex.nome = campoNome.value.trim();
@@ -812,7 +827,7 @@ function abrirEditor(diaSemana) {
         h('div', { class: 'ed-linha' },
           h('label', {}, 'Reps mín.', min), h('label', {}, 'Reps máx.', max), h('label', {}, METODOS[ex.metodo]?.rotulo ?? 'Séries', series)),
         h('div', { class: `ed-linha ed-metodo${ex.metodo === 'drop' ? ' com-drops' : ''}` },
-          h('label', {}, 'Método', metodo), ex.metodo === 'drop' ? h('label', {}, 'Drops', drops) : null),
+          h('label', {}, 'Método', metodo), ex.metodo === 'drop' ? h('label', {}, 'Drops', drops) : null, h('label', {}, 'Descanso', descansoEx)),
         explica,
         nota,
         h('div', { class: 'ed-botoes' },
@@ -827,7 +842,7 @@ function abrirEditor(diaSemana) {
     h('label', { class: 'rotulo', texto: 'Dia' }), qualDia,
     h('label', { class: 'rotulo', texto: 'Nome' }), nome,
     h('h2', { class: 'secao', texto: 'Exercícios' }), lista,
-    h('button', { class: 'botao cheio', onclick: () => { treino.exercicios.push({ id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, nota: '', aquecimento: [], referencia: null }); redesenhar(); lista.lastElementChild?.querySelector('input')?.focus(); }, texto: '+ Exercício' }),
+    h('button', { class: 'botao cheio', onclick: () => { treino.exercicios.push({ id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, descansoS: null, nota: '', aquecimento: [], referencia: null }); redesenhar(); lista.lastElementChild?.querySelector('input')?.focus(); }, texto: '+ Exercício' }),
     plano.dias.some((d) => d.id === treino.id) ? h('button', {
       class: 'botao texto perigo', style: 'margin-top:18px', onclick: (ev) => {
         if (ev.currentTarget.dataset.certeza !== 'sim') { ev.currentTarget.dataset.certeza = 'sim'; ev.currentTarget.textContent = 'Tocar de novo para apagar o dia'; return; }
@@ -856,9 +871,6 @@ function abrirAjustes() {
   const situacao = app.sync.estado === 'erro'
     ? app.sync.mensagem
     : pend > 0 ? `${pend} mudança(s) esperando para subir.` : 'Tudo sincronizado com o computador.';
-  const descansoSel = h('select', { class: 'campo', 'aria-label': 'Descanso entre séries' },
-    [60, 90, 120, 150, 180].map((s) => h('option', { value: String(s), selected: s === app.descansoS ? true : null, texto: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min` })));
-  descansoSel.addEventListener('change', () => { app.descansoS = Number(descansoSel.value); guardado.gravar('descanso', app.descansoS); });
   const linhaSit = h('p', { class: 'discreto', texto: situacao });
   folha('Ajustes', [
     h('div', { class: 'cartao' },
@@ -874,7 +886,6 @@ function abrirAjustes() {
           ev.currentTarget.disabled = false;
         }, texto: 'Sincronizar agora',
       })),
-    h('div', { class: 'cartao' }, h('label', { class: 'rotulo', style: 'margin-top:0', texto: 'Descanso entre séries' }), descansoSel),
     h('div', { class: 'cartao' },
       h('p', { class: 'pequeno', texto: 'Para usar como app: no Safari, Compartilhar → Adicionar à Tela de Início.' }),
       h('button', { class: 'botao texto perigo', style: 'margin-top:8px', onclick: sair, texto: 'Sair da conta neste iPhone' })),

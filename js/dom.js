@@ -30,6 +30,7 @@ const CAMINHOS = {
   fechar: 'M6 6l12 12M18 6L6 18',
   comecar: 'M8 5.5v13l11-6.5Z',
   parar: 'M7 7h10v10H7Z',
+  voltar: 'M15 5l-7 7 7 7',
   liberada: 'M8 11V7.5a4 4 0 0 1 7.6-1.7M6 11h12v9H6ZM12 14.5v2',
   seguir: 'M5 12h14M13 6l6 6-6 6',
 };

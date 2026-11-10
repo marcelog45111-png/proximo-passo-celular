@@ -62,17 +62,30 @@ export function abrirJogo(partida, aoFechar) {
   const carimbo = h('div', { class: 'carimbo', role: 'status', 'aria-live': 'polite' });
   const descanso = h('div', { class: 'jogo-descanso' });
   const corpo = h('div', { class: 'jogo-corpo' });
+  // replaceChildren escreve "null" na tela: as pecas que nao valem agora ficam de fora.
+  const trocarCorpo = (...pecas) => corpo.replaceChildren(...pecas.filter((p) => p !== null && p !== undefined && p !== false));
   const d = h('dialog', { class: 'jogo' },
+    // Seta de voltar a esquerda (a pagina anterior: a serie de antes, ou desfazer o relogio) e o X a
+    // direita, que fecha e volta ao treino (10/11/2026, pedido).
     h('div', { class: 'jogo-topo' },
-      h('button', { class: 'botao-redondo', 'aria-label': 'Fechar e voltar ao treino', onclick: () => d.close() }, icone('fechar')),
-      h('div', { class: 'jogo-titulo' }, num, nome),
-      metodo),
+      h('button', { class: 'botao-redondo', 'aria-label': 'Voltar', onclick: () => voltar() }, icone('voltar')),
+      h('div', { class: 'jogo-titulo' }, num, nome, metodo),
+      h('button', { class: 'botao-redondo', 'aria-label': 'Fechar e voltar ao treino', onclick: () => d.close() }, icone('fechar'))),
     fases,
     h('div', { class: 'jogo-palco' }, cena, carimbo),
     descanso,
     corpo);
 
   const plano = () => planoDeHoje(o.ex, o.ultima, o.feitas().length);
+  let naTela = null; // o passo na tela (numero) ou 'fim'
+  function voltar() {
+    if (naTela === 'fim') { mostrarPasso(Math.max(0, plano().passos.length - 1), -1); return; }
+    const i = naTela ?? 0;
+    if (contando?.i === i) { contando = null; mostrarPasso(i, 0); return; }
+    if (medida?.i === i && feita(o.feitas(), i) === null) { medida = null; if (valores.has(i)) valores.get(i).seg = 0; mostrarPasso(i, 0); return; }
+    if (i > 0) { mostrarPasso(i - 1, -1); return; }
+    d.close();
+  }
   const feita = (lista, i) => (lista[i] && lista[i].reps > 0 ? lista[i] : null);
   const pendenteDepoisDe = (passos, lista, de) => {
     for (let i = de; i < passos.length; i += 1) if (feita(lista, i) === null) return i;
@@ -98,6 +111,7 @@ export function abrirJogo(partida, aoFechar) {
   // regra do metodo) -> contando (o relogio da serie e o Parar) -> anotar (as repeticoes).
   // O "Anotar sem cronometro" pula direto para o anotar; serie ja feita abre no anotar.
   function mostrarPasso(i, direcao = 1) {
+    naTela = i;
     clearInterval(relogioDaSerie);
     relogioDaSerie = null;
     // Tocar numa serie que falta de um exercicio encerrado volta a valer o roteiro.
@@ -166,14 +180,14 @@ export function abrirJogo(partida, aoFechar) {
       const listaDepois = o.feitas();
       const proximo = pendenteDepoisDe(depois.passos, listaDepois, i + 1);
       if (!ja) estampar(veredito(valor, passo.base), passo, valor, pl.faixa);
+      if (!ja) {
+        // Descanso so quando o exercicio (ou o metodo) define um; pelo feeling, nenhum cronometro.
+        const pausa = intervaloAntes(proximo === -1 ? null : depois.passos[proximo], o.ex);
+        if (pausa.segundos) o.descansar(pausa.segundos, pausa.rotulo, pausa.texto); else o.pararDescanso();
+      }
       if (proximo === -1) {
-        if (!ja) o.descansar(null);
         mostrarFim();
         return;
-      }
-      if (!ja) {
-        const pausa = intervaloAntes(depois.passos[proximo]);
-        if (pausa.segundos === 0) o.pararDescanso(); else o.descansar(pausa.segundos, pausa.rotulo, pausa.texto);
       }
       mostrarPasso(proximo, 1);
     };
@@ -190,6 +204,12 @@ export function abrirJogo(partida, aoFechar) {
     const titulo = h('h2', { class: 'jogo-etapa' }, passo.rotulo, doTipo > 1 ? h('small', { texto: ` de ${doTipo}` }) : null,
       h('span', { class: 'jogo-regra', 'data-ate': regra.ate, texto: regra.curto }));
 
+    // O tipo da serie e a execucao anotada no plano (ex.: 'Lento'), sempre a mostra.
+    const tipoDaSerie = () => h('div', { class: 'jogo-tipo' },
+      h('span', { class: 'tipo-chip', texto: `${METODOS[o.ex.metodo]?.nome ?? 'Série normal'}${passo.tipo !== 'serie' ? ` · ${passo.rotulo}` : ''}` }),
+      o.ex.nota ? h('span', { class: 'tipo-chip nota' }, h('small', { texto: 'Execução' }), o.ex.nota) : null);
+    const comoFazer = regra.durante && regra.durante !== o.ex.nota ? h('p', { class: 'jogo-como', texto: regra.durante }) : null;
+
     const algumFeito = lista.some((s) => s.reps > 0);
     const acoes = h('div', { class: 'jogo-acoes' },
       fase === 'preparar' ? h('button', { class: 'botao texto', onclick: semRelogio, texto: 'Anotar sem cronômetro' })
@@ -201,11 +221,12 @@ export function abrirJogo(partida, aoFechar) {
 
     if (fase === 'preparar') {
       corpo.dataset.fase = 'preparar';
-      corpo.replaceChildren(
+      trocarCorpo(
         titulo,
         cartaoMeta,
         numero('carga primeiro', 'kg', campoCarga, 'carga', 'um quilo'),
-        regra.durante ? h('p', { class: 'jogo-como', texto: regra.durante }) : null,
+        tipoDaSerie(),
+        comoFazer,
         h('button', { class: 'botao principal cheio jogo-feito', onclick: comecar }, icone('comecar'), 'Começar série'),
         acoes);
     } else if (fase === 'contando') {
@@ -214,17 +235,22 @@ export function abrirJogo(partida, aoFechar) {
       const tique = () => { tempo.textContent = relogio((Date.now() - contando.desde) / 1000); };
       tique();
       relogioDaSerie = setInterval(tique, 250);
-      corpo.replaceChildren(
+      trocarCorpo(
         titulo,
         h('div', { class: 'jogo-contando' },
           tempo,
-          h('p', { class: 'jogo-contando-linha' }, h('b', { texto: kg(valor.carga) }), ` · ${regra.ate === 'meta' ? `meta ${passo.alvo.reps} reps` : regra.curto.toLowerCase()}`),
-          regra.durante ? h('p', { class: 'jogo-como', texto: regra.durante }) : null),
+          // A meta grande enquanto a serie roda (10/11/2026: 'a meta 13 reps grande pq ele ta escondendo').
+          h('div', { class: 'jogo-alvo', 'data-ate': regra.ate },
+            h('span', { class: 'jogo-rotulo', texto: regra.ate === 'falha' ? 'Até a falha' : 'Meta' }),
+            h('b', {}, String(passo.alvo.reps), h('small', { texto: ' reps' })),
+            h('span', { class: 'jogo-alvo-carga', texto: `com ${kg(valor.carga)}` })),
+          tipoDaSerie(),
+          comoFazer),
         h('button', { class: 'botao cheio jogo-feito jogo-parar', onclick: parar }, icone('parar'), 'Parar série'),
         acoes);
     } else {
       corpo.dataset.fase = 'anotar';
-      corpo.replaceChildren(
+      trocarCorpo(
         titulo,
         valor.seg > 0 ? h('p', { class: 'jogo-durou' }, 'Série em ', h('b', { texto: relogio(valor.seg) }), passo.base?.seg ? ` · anterior ${relogio(passo.base.seg)}` : '') : null,
         numero('carga', 'kg', campoCarga, 'carga', 'um quilo'),
@@ -259,6 +285,8 @@ export function abrirJogo(partida, aoFechar) {
   }
 
   function mostrarFim() {
+    naTela = 'fim';
+    clearInterval(relogioDaSerie);
     const pl = plano();
     const lista = o.feitas();
     desenharFases(pl.passos, lista, -1);
@@ -283,7 +311,7 @@ export function abrirJogo(partida, aoFechar) {
         h('p', { texto: `A carga sobe com ${regraDaCarga(o.ex)}. Por enquanto, a próxima meta é +1 rep onde faltou.` }));
     }
     const liberada = r !== null && r.liberou !== null ? caixa : null;
-    corpo.replaceChildren(
+    trocarCorpo(
       h('h2', { class: 'jogo-etapa fim', texto: 'Exercício fechado' }),
       r === null || r.tipo === 'nova'
         ? h('div', { class: 'fim-resultado' }, h('b', { texto: 'Primeiro registro' }), h('span', { texto: 'vira a referência do próximo treino' }))

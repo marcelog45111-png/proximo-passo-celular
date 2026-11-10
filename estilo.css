@@ -376,6 +376,11 @@ button.serie:active { transform: none; opacity: 1; background: var(--cartao-2); 
 .descanso[data-fim="sim"] { background: var(--marca); color: var(--sobre-tinta); }
 .descanso[data-fim="sim"] .pequeno { color: inherit; }
 .descanso[data-fim="sim"] .descanso-barra { display: none; }
+/* Passou do descanso combinado: vermelho, contando o quanto passou. */
+.descanso[data-passou="sim"] { background: #ff453a !important; color: #fff; }
+.descanso[data-passou="sim"] .pequeno, .descanso[data-passou="sim"] .descanso-rotulo { color: inherit; }
+.descanso[data-passou="sim"] .descanso-barra { display: none; }
+.descanso[data-passou="sim"] .botao { background: rgba(255, 255, 255, 0.2); color: #fff; }
 
 /* ---------- dieta ---------- */
 
@@ -472,8 +477,8 @@ dialog.folha::backdrop { background: rgba(0, 0, 0, 0.55); animation: escurece 0.
 .ed-linha label { font-size: 0.7rem; color: var(--texto-2); display: grid; gap: 4px; }
 .ed-linha .campo, .ed-ex .campo { min-height: 44px; }
 .ed-botoes { display: flex; gap: 6px; justify-content: flex-end; }
-.ed-linha.ed-metodo { grid-template-columns: 1fr; }
-.ed-linha.ed-metodo.com-drops { grid-template-columns: 2fr 1fr; }
+.ed-linha.ed-metodo { grid-template-columns: 3fr 2fr; }
+.ed-linha.ed-metodo.com-drops { grid-template-columns: 5fr 3fr 4fr; }
 .ed-explica { margin: 0; font-size: 0.76rem; color: var(--texto-2); }
 .lista-simples.historico li { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; font-variant-numeric: tabular-nums; }
 
@@ -502,10 +507,11 @@ html.jogo-aberto, html.jogo-aberto body { overflow: hidden; overscroll-behavior:
 html.jogo-aberto body { position: fixed; left: 0; right: 0; top: var(--preso-em, 0); }
 dialog.jogo::backdrop { background: #070a09; }
 .jogo-topo {
-  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 4px;
-  min-height: 52px; padding: var(--topo) 12px 0 6px;
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 4px;
+  min-height: 52px; padding: var(--topo) 6px 0;
 }
-.jogo-titulo { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.jogo-titulo { display: flex; align-items: baseline; justify-content: center; gap: 8px; min-width: 0; }
+.jogo-titulo .chip { flex: none; align-self: center; }
 .jogo-num { font-family: var(--numero); font-size: 0.94rem; font-weight: 700; color: var(--tinta); font-variant-numeric: tabular-nums; }
 .jogo-nome { font-size: 1.06rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jogo .chip { color: var(--ciano); }
@@ -595,6 +601,16 @@ dialog.jogo > .jogo-palco { position: relative; flex: 0 1 clamp(84px, 16dvh, 150
 .jogo-contando-linha b { color: var(--texto); font-family: var(--numero); font-variant-numeric: tabular-nums; }
 .jogo-parar { background: #f3f7f4; color: #070a09; }
 .jogo-parar svg { fill: currentColor; }
+/* Contando: a meta grande e o tipo da serie a mostra. */
+.jogo-alvo { display: grid; justify-items: center; gap: 0; margin-top: 2px; }
+.jogo-alvo b { font-family: var(--numero); font-size: 2.6rem; font-weight: 800; line-height: 1.05; color: var(--tinta); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.jogo-alvo b small { font-size: 0.45em; font-weight: 700; color: var(--texto-2); letter-spacing: 0; }
+.jogo-alvo[data-ate="falha"] b, .jogo-alvo[data-ate="falha"] .jogo-rotulo { color: var(--laranja); }
+.jogo-alvo-carga { font-size: 0.95rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.jogo-tipo { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.tipo-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 5px 11px; border-radius: 999px; background: var(--cartao-2); font-size: 0.84rem; font-weight: 650; color: var(--texto); }
+.tipo-chip.nota { background: color-mix(in srgb, var(--laranja) 16%, transparent); color: var(--laranja); }
+.tipo-chip small { font-size: 0.72rem; font-weight: 600; opacity: 0.8; }
 .jogo-durou { margin: 0; text-align: center; font-size: 0.9rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
 .jogo-durou b { color: var(--texto); font-family: var(--numero); }
 
@@ -613,11 +629,11 @@ dialog.jogo > .jogo-palco { position: relative; flex: 0 1 clamp(84px, 16dvh, 150
 .passo-numero.carga { grid-template-columns: 52px minmax(0, 1fr) 52px; padding: 0 6px; }
 .passo-numero.carga .passo-botao { height: 48px; border-radius: 16px; color: var(--texto-2); }
 .passo-numero.carga .passo-botao svg { width: 22px; height: 22px; }
-.ao-vivo { display: flex; justify-content: center; min-height: 26px; margin: -6px 0 -2px; }
+.ao-vivo { display: flex; justify-content: center; min-height: 26px; margin: 0; }
 /* O botao que grava fica sempre ao alcance do polegar, mesmo com o descanso ou o texto grande empurrando a tela. */
 .jogo-feito {
   min-height: 60px; border-radius: 20px; font-size: 1.14rem; margin-top: 2px; min-width: 0;
-  position: sticky; bottom: calc(var(--base) + 12px); z-index: 3; box-shadow: 0 0 0 8px #070a09, 0 -18px 22px 4px rgba(7, 10, 9, 0.85);
+  position: sticky; bottom: calc(var(--base) + 12px); z-index: 3;
 }
 .jogo-feito svg { width: 22px; height: 22px; stroke-width: 2.8; }
 .corta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
