@@ -326,7 +326,7 @@ button.serie:active { transform: none; opacity: 1; background: var(--cartao-2); 
 .so-leitor { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .comecar { min-height: 50px; margin: 8px 0 2px; border-radius: 16px; font-size: 1.02rem; }
 .comecar svg { width: 18px; height: 18px; }
-.ex-acoes { display: flex; justify-content: space-between; gap: 8px; }
+.ex-acoes { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 8px; }
 
 /* A marca contra a ultima vez: seta e o quanto. Verde subiu, cinza igual, laranja abaixo. */
 .selo {

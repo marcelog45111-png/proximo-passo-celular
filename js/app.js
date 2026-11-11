@@ -706,7 +706,7 @@ function ligarPalco(tela) {
 
 const CHANCE = { alta: 'Chance alta', media: 'Chance média', baixa: 'Chance baixa' };
 const quandoFoi = (ultima) => (ultima === null ? null : quandoRelativo(ultima.dia, hoje()));
-const rotuloDoExtra = (ex) => (ex.metodo === 'myo' ? 'Adicionar mini' : ex.metodo === 'restpause' ? 'Adicionar pausa' : ex.metodo === 'drop' ? 'Adicionar drop' : 'Adicionar série');
+const rotuloDoTirar = (ex) => (ex.metodo === 'myo' ? 'Tirar mini' : ex.metodo === 'restpause' ? 'Tirar pausa' : ex.metodo === 'drop' ? 'Tirar drop' : 'Tirar série');
 
 /**
  * O cartao mostra o exercicio inteiro antes de comecar: cada serie com a base (a
@@ -833,8 +833,25 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     cartao.append(h('button', { class: `botao cheio comecar${atual ? ' principal' : ''}`, onclick: () => jogar(ex.id, null) },
       icone('comecar'), validas.length === 0 && plano.passos[falta].t === 'a' ? 'Começar pelo aquecimento' : validas.length === 0 && !lista.some((x) => x.reps > 0) ? 'Começar' : `Continuar: ${plano.passos[falta].rotulo}`));
   }
+  // O "Adicionar serie" do cartao saiu (11/11/2026: "e pra remover esse adicionar serie, e inutil").
+  // Serie a mais que ja existe (de antes, ou do "Mais uma serie" do fim do exercicio) ainda sai pelo
+  // "Tirar serie", que so aparece quando ha uma. Com algo anotado nela, o primeiro toque so avisa.
+  const aMais = lista.length - roteiro(ex).length;
+  const ultimaAMais = aMais > 0 ? lista.at(-1) : null;
   cartao.append(h('div', { class: 'ex-acoes' },
-    h('button', { class: 'botao texto', onclick: () => { adicionarSerie(ex, treinoId); desenhar(); }, texto: rotuloDoExtra(ex) }),
+    ultimaAMais ? h('button', {
+      class: 'botao texto perigo', 'aria-label': `${rotuloDoTirar(ex)} a mais${aMais > 1 ? ' (a última)' : ''}`,
+      onclick: (ev) => {
+        if (ultimaAMais.reps > 0 && ev.currentTarget.dataset.certeza !== 'sim') {
+          ev.currentTarget.dataset.certeza = 'sim';
+          ev.currentTarget.textContent = `Apagar ${numeroBr(ultimaAMais.carga)} kg × ${ultimaAMais.reps}?`;
+          return;
+        }
+        removerSerie(ex, treinoId);
+        desenhar();
+      },
+      texto: rotuloDoTirar(ex),
+    }) : null,
     completo || !atual ? h('button', { class: 'botao texto', onclick: () => { app.abertos.delete(ex.id); desenhar(); }, texto: 'Recolher' }) : null,
     h('button', { class: 'botao texto', onclick: () => abrirHistorico(ex), texto: 'Histórico' })));
   return cartao;
@@ -867,6 +884,8 @@ function partidaDe(exId, comecarEm) {
     },
     reabrir: () => marcarEncerrado(ex.id, false),
     adicionar: () => adicionarSerie(ex, treino.id),
+    remover: () => removerSerie(ex, treino.id),
+    noPlano: () => roteiro(ex).length,
     descansar: (segundos, rotulo, texto) => comecarDescanso(segundos, rotulo, texto, { exId: ex.id, dia: app.diaTreino }),
     pararDescanso,
     cena: {
@@ -935,6 +954,18 @@ function adicionarSerie(ex, treinoId) {
   s.treinoId = treinoId;
   gravarSessao(s);
   return lista.length - 1;
+}
+
+/** Tira a ultima serie das que passaram do plano (as do plano nunca saem). Devolve se tirou. */
+function removerSerie(ex, treinoId) {
+  const s = sessaoDe(hoje());
+  const lista = s.exercicios[ex.id] ?? [];
+  if (lista.length <= roteiro(ex).length) return false;
+  lista.pop();
+  s.exercicios[ex.id] = lista;
+  s.treinoId = treinoId;
+  gravarSessao(s);
+  return true;
 }
 
 function marcarEncerrado(exId, sim) {

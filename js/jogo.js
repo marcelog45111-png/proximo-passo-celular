@@ -37,6 +37,7 @@ function prenderPagina() {
  *   ex, indice, ultima, quando ('semana passada', 'anotado no plano' ou null), comecarEm (passo ou null),
  *   feitas(): a lista do dia, na ordem do roteiro; encerrado(): bool,
  *   gravar(i, {carga, reps}), desmarcar(i), encerrar(), reabrir(), adicionar(): indice novo,
+ *   remover(): tira a ultima serie a mais; noPlano(): quantos passos o plano tem,
  *   descansar(segundos | null), pararDescanso(),
  *   cena: { montar(host), atualizar(), foco(id) } | null,
  *   proximo(): a partida do proximo exercicio que falta, ou null
@@ -244,6 +245,8 @@ export function abrirJogo(partida, aoFechar) {
     const comoFazer = regra.durante && regra.durante !== o.ex.nota ? h('p', { class: 'jogo-como', texto: regra.durante }) : null;
 
     const algumFeito = lista.some((s) => s.reps > 0);
+    // a ultima serie, e ela passou do plano (veio do "Mais uma serie" / "Adicionar serie")
+    const aMaisDaVez = typeof o.noPlano === 'function' && i >= o.noPlano() && i === Math.max(lista.length, pl.passos.length) - 1;
     const acoes = h('div', { class: 'jogo-acoes' },
       fase === 'preparar' ? h('button', { class: 'botao texto', onclick: semRelogio, texto: 'Anotar sem cronômetro' })
         : ja ? h('button', { class: 'botao texto', onclick: () => { o.desmarcar(i); mudou = true; valores.delete(i); o.cena?.atualizar(); mostrarPasso(i, 1); }, texto: 'Desmarcar' })
@@ -254,6 +257,17 @@ export function abrirJogo(partida, aoFechar) {
           const k = pendenteDepoisDe(plano().passos, o.feitas(), i);
           if (k === -1) mostrarFim(); else mostrarPasso(k, 1);
         }, texto: 'Pular aquecimento',
+      }) : aMaisDaVez && !ja && fase !== 'contando' ? h('button', {
+        class: 'botao texto perigo', onclick: () => {
+          o.remover?.();
+          mudou = true;
+          valores.delete(i);
+          contando = null;
+          medida = null;
+          o.cena?.atualizar();
+          const k = pendenteDepoisDe(plano().passos, o.feitas(), 0);
+          if (k === -1) mostrarFim(); else mostrarPasso(k, -1);
+        }, texto: 'Tirar esta série',
       }) : algumFeito && fase !== 'contando' ? h('button', {
         class: 'botao texto', onclick: () => { o.encerrar(); mudou = true; o.cena?.atualizar(); mostrarFim(); }, texto: 'Encerrar exercício',
       }) : null);
