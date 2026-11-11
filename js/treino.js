@@ -60,9 +60,9 @@ function lerExercicio(e) {
     aquecimentoModo: MODOS_DE_AQUECIMENTO.includes(e.aquecimentoModo) ? e.aquecimentoModo : null,
     // O musculo escolhido quando o nome nao diz (ou diz errado); null = pelo nome.
     musculo: typeof e.musculo === 'string' && Object.hasOwn(MUSCULOS, e.musculo) ? e.musculo : null,
-    referencia: e.referencia && typeof e.referencia === 'object'
-      ? { carga: numero(e.referencia.carga, 0), reps: (Array.isArray(e.referencia.reps) ? e.referencia.reps : []).map((r) => Math.round(numero(r, 0))).filter((r) => r > 0) }
-      : null,
+    // A referencia anotada (o que a pessoa fazia antes do app). `cargas` (11/11/2026, importar com IA):
+    // uma carga por serie quando elas mudam ("40/35/30"); sem ela, `carga` vale para todas.
+    referencia: e.referencia && typeof e.referencia === 'object' ? referenciaDe(e.referencia) : null,
   };
 }
 
@@ -173,8 +173,21 @@ export function ultimaVez(exercicio, sessoes, antesDe) {
     if (series.length > 0) return { dia: s.dia, series };
   }
   const ref = exercicio.referencia;
-  if (ref && ref.reps.length > 0) return { dia: null, series: ref.reps.map((reps) => ({ carga: ref.carga, reps })) };
+  if (ref && ref.reps.length > 0) return { dia: null, series: ref.reps.map((reps, i) => ({ carga: ref.cargas?.[i] ?? ref.carga, reps })) };
   return null;
+}
+
+function referenciaDe(r) {
+  const carga = numero(r.carga, 0);
+  const cargas = Array.isArray(r.cargas) ? r.cargas : [];
+  // so a carga (importada de uma ficha sem repeticoes feitas): guia a carga do 1o treino, sem inventar reps
+  if (!Array.isArray(r.reps) || r.reps.length === 0) {
+    const so = cargas.map((c) => numero(c, null)).filter((c) => c !== null);
+    return { carga, reps: [], ...(so.some((c) => c !== carga) ? { cargas: so } : {}) };
+  }
+  const pares = (Array.isArray(r.reps) ? r.reps : []).map((reps, i) => [Math.round(numero(reps, 0)), numero(cargas[i], null)]).filter(([reps]) => reps > 0);
+  const porSerie = pares.some(([, c]) => c !== null && c !== carga);
+  return { carga, reps: pares.map(([reps]) => reps), ...(porSerie ? { cargas: pares.map(([, c]) => c ?? carga) } : {}) };
 }
 
 /** Quanto sobe a carga: pouco nos halteres leves, mais nas maquinas. */
@@ -546,7 +559,7 @@ const GRUPOS = [
   [/gluteo|hip thrust|elevacao pelvica|abdutora|abducao/, 'gluteo', /hip thrust|elevacao pelvica/],
   [/adutora|adutor|aducao/, 'adutores', null],
   [/encolhimento|trapezio|remada alta/, 'trapezio', /remada alta/],
-  [/posterior de ombro|deltoide|crucifixo inverso|face pull|elevacao lateral|elevacao frontal|frontal|desenvolvimento|arnold|militar|overhead|shoulder/, 'ombro', /desenvolvimento|arnold|militar|overhead|shoulder press/],
+  [/posterior de ombro|deltoide|crucifixo inverso|face pull|elevacao lateral|elevacao frontal|(?<!puxada )frontal|desenvolvimento|arnold|militar|overhead|shoulder/, 'ombro', /desenvolvimento|arnold|militar|overhead|shoulder press/],
   [/triceps|frances|testa|coice|anjo|corda|mergulho no banco|pushdown/, 'triceps', null],
   [/flexora|leg curl|stiff|terra|romeno|good morning|nordic/, 'posterior', /stiff|terra|romeno|good morning/],
   [/rosca|biceps|martelo|scott|curl/, 'biceps', null],

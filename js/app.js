@@ -13,6 +13,7 @@ import { abrirChave, configDaIa, conversar } from './garry.js';
 import * as movimento from './movimento.js';
 import { cargaReps, h, icone, numeroBr, selo } from './dom.js';
 import { abrirJogo, jogoAberto } from './jogo.js';
+import { corresponder, interpretarTreino, LIMITES, notaDoImportado, paraPlano } from './importar.js';
 
 // ---------- guardado no aparelho ----------
 
@@ -472,7 +473,8 @@ function telaTreino() {
     vazia.append(h('div', { class: 'cartao' },
       h('p', { texto: 'Ainda não há treino aqui.' }),
       h('p', { class: 'discreto', texto: 'Monte o seu: os dias da semana e os exercícios de cada um. Se você usa o app do computador, o treino de lá chega sozinho.' }),
-      h('button', { class: 'botao principal cheio', style: 'margin-top:10px', onclick: () => abrirEditor(semanaHoje), texto: 'Montar treino' })));
+      h('button', { class: 'botao principal cheio', style: 'margin-top:10px', onclick: () => abrirEditor(semanaHoje), texto: 'Montar treino' }),
+      h('button', { class: 'botao cheio imp-entrada', style: 'margin-top:8px', onclick: () => abrirImportacao() }, icone('ia'), 'Importar treino com IA (foto ou texto)')));
     return vazia;
   }
 
@@ -1642,6 +1644,335 @@ function abrirHistorico(ex) {
   ]);
 }
 
+// ---------- importar treino com IA (11/11/2026) ----------
+// Montar treino -> Importar com IA -> Imagem ou Texto -> Interpretar -> Revisar -> Salvar. As regras
+// (o que a IA pode devolver, a correspondencia com os exercicios da pessoa e o plano novo) estao em
+// importar.js; aqui so a tela. Nada e salvo sem o toque em "Salvar"; salvar usa o mesmo caminho do
+// Editar treino (`treinoPlano` pela sincronizacao).
+
+let ultimaLeitura = null; // { assinatura, resultado }: a mesma entrada nao vai duas vezes para a IA
+
+async function prepararImagem(arquivo) {
+  if (!String(arquivo.type).startsWith('image/')) throw new Error(`"${arquivo.name || 'arquivo'}" não é uma imagem.`);
+  if (arquivo.size > LIMITES.bytesPorImagem) throw new Error(`"${arquivo.name || 'imagem'}" passa de 15 MB. Mande um print ou uma foto menor.`);
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(arquivo);
+  } catch {
+    throw new Error(`Não consegui abrir "${arquivo.name || 'a imagem'}". Tente um print ou uma foto em JPG ou PNG.`);
+  }
+  // A IA le bem ate ~1600 px; maior so pesa no envio (e a cota cobra por tamanho).
+  const escala = Math.min(1, LIMITES.ladoMaximo / Math.max(bitmap.width, bitmap.height));
+  const tela = document.createElement('canvas');
+  tela.width = Math.max(1, Math.round(bitmap.width * escala));
+  tela.height = Math.max(1, Math.round(bitmap.height * escala));
+  tela.getContext('2d').drawImage(bitmap, 0, 0, tela.width, tela.height);
+  bitmap.close?.();
+  return { url: tela.toDataURL('image/jpeg', 0.85), nome: arquivo.name || 'imagem' };
+}
+
+const lerNumeros = (t) => String(t).split(/[\/;,\s]+/).map((p) => Number(p.replace(',', '.').replace(/[^0-9.]/g, ''))).filter((n) => Number.isFinite(n) && n > 0);
+const textoDasCargas = (cargas) => ((cargas ?? []).filter((c) => c !== null).length === 0 ? '' : [...new Set(cargas.filter((c) => c !== null))].length === 1 ? numeroBr(cargas.find((c) => c !== null)) : cargas.map((c) => (c === null ? '?' : numeroBr(c))).join('/'));
+const textoDoAquecimento = (a) => (a ?? []).map((x) => `${numeroBr(x.carga)}×${x.reps}`).join(', ');
+function lerAquecimento(t) {
+  return String(t).split(/[,;]+/).map((p) => p.match(/(\d+(?:[.,]\d+)?)\s*(?:kg)?\s*[x×*]\s*(\d+)/i)).filter(Boolean)
+    .map((m) => ({ carga: Number(m[1].replace(',', '.')), reps: Number(m[2]) })).filter((a) => a.reps > 0 && a.reps <= 100 && a.carga >= 0 && a.carga <= 1000);
+}
+
+/** O que a IA leu, pronto para revisar: cada exercicio ja olha se e um que a pessoa tem. */
+function paraRevisar(lido) {
+  const existentes = planoTreino().dias.flatMap((d) => d.exercicios.map((e) => ({ id: e.id, nome: e.nome, dia: d.nome })));
+  return {
+    modelo: lido.modelo,
+    aviso: lido.problema,
+    dias: lido.dias.map((d) => ({
+      ...d,
+      exercicios: d.exercicios.map((x) => {
+        const achado = corresponder(x.nome, existentes);
+        return { ...x, nota: notaDoImportado(x), usarId: achado?.ex.id ?? null, achado, existentes };
+      }),
+    })),
+  };
+}
+
+function abrirImportacao() {
+  const cfg = configDaIa(app.estado.config);
+  const est = { modo: 'imagem', imagens: [], texto: '', lendo: false, erro: '', revisao: null };
+  const corpo = h('div', { class: 'imp' });
+  const d = folha('Importar treino com IA', [corpo]);
+  d.classList.add('folha-importar');
+
+  const adicionarArquivos = async (lista) => {
+    const arquivos = [...lista].filter((a) => a && a.size !== undefined);
+    if (arquivos.length === 0) return;
+    est.erro = '';
+    for (const a of arquivos) {
+      if (est.imagens.length >= LIMITES.imagens) { est.erro = `Até ${LIMITES.imagens} imagens de uma vez.`; break; }
+      try {
+        est.imagens.push(await prepararImagem(a));
+      } catch (e) {
+        est.erro = e.message;
+      }
+    }
+    est.modo = 'imagem';
+    desenharImportacao();
+  };
+  // Colar imagem (Ctrl+V no computador, "Colar" no iPhone) e arrastar e soltar em qualquer lugar da folha.
+  d.addEventListener('paste', (ev) => {
+    if (est.revisao || est.lendo) return;
+    const arquivos = [...(ev.clipboardData?.items ?? [])].filter((i) => i.kind === 'file' && i.type.startsWith('image/')).map((i) => i.getAsFile());
+    if (arquivos.length === 0) return;
+    ev.preventDefault();
+    adicionarArquivos(arquivos);
+  });
+  d.addEventListener('dragover', (ev) => { if (!est.revisao && !est.lendo) { ev.preventDefault(); corpo.dataset.solta = 'sim'; } });
+  d.addEventListener('dragleave', () => { delete corpo.dataset.solta; });
+  d.addEventListener('drop', (ev) => {
+    delete corpo.dataset.solta;
+    if (est.revisao || est.lendo) return;
+    ev.preventDefault();
+    adicionarArquivos(ev.dataTransfer?.files ?? []);
+  });
+
+  async function interpretar() {
+    if (est.lendo) return;
+    const texto = est.modo === 'texto' ? est.texto.trim() : '';
+    const imagens = est.modo === 'imagem' ? est.imagens.map((i) => i.url) : [];
+    if (!texto && imagens.length === 0) { est.erro = est.modo === 'texto' ? 'Cole o treino no campo.' : 'Escolha, arraste ou cole uma imagem.'; desenharImportacao(); return; }
+    const assinatura = JSON.stringify([texto, imagens.map((u) => `${u.length}:${u.slice(-80)}`)]);
+    est.erro = '';
+    if (ultimaLeitura?.assinatura === assinatura) {
+      est.revisao = paraRevisar(structuredClone(ultimaLeitura.resultado));
+      desenharImportacao();
+      return;
+    }
+    est.lendo = true;
+    desenharImportacao();
+    try {
+      const chave = await abrirChave(cfg.cifrada, app.cifra);
+      if (!chave) throw new Error('A chave da IA não abriu. Salve de novo em Ajustes > Garry (IA).');
+      const lido = await interpretarTreino({ ...cfg, chave }, { texto, imagens });
+      ultimaLeitura = { assinatura, resultado: structuredClone(lido) };
+      est.revisao = paraRevisar(lido);
+    } catch (e) {
+      est.erro = e.message;
+    } finally {
+      est.lendo = false;
+      if (d.open) desenharImportacao();
+    }
+  }
+
+  function salvar(msg) {
+    const dias = est.revisao.dias;
+    const semDia = dias.find((x) => x.diaSemana === null);
+    if (semDia) { msg.textContent = `Escolha o dia da semana de "${semDia.nome}".`; return; }
+    const repetido = dias.find((x, i) => dias.findIndex((y) => y.diaSemana === x.diaSemana) !== i);
+    if (repetido) { msg.textContent = `Dois treinos na ${NOMES_DOS_DIAS[repetido.diaSemana].toLowerCase()}. Mude o dia de um deles.`; return; }
+    const vazio = dias.find((x) => !x.exercicios.some((e) => e.nome.trim() !== ''));
+    if (vazio) { msg.textContent = `"${vazio.nome}" ficou sem exercício. Tire o dia ou acrescente um.`; return; }
+    const atual = planoTreino();
+    const plano = paraPlano(dias, atual);
+    const novo = JSON.stringify(plano);
+    if (novo === (app.estado.config.treinoPlano ?? '')) { msg.textContent = 'Nada mudou: o treino já está assim.'; return; }
+    mudar((e) => definirConfig(e, 'treinoPlano', novo));
+    ultimaLeitura = null;
+    const primeiro = [...dias].map((x) => x.diaSemana).filter((x) => x >= 1 && x <= 6).sort()[0];
+    if (primeiro) { app.diaTreino = primeiro; app.semana = 0; }
+    document.querySelectorAll('dialog[open]').forEach((x) => x.close());
+    desenhar();
+  }
+
+  function desenharImportacao() {
+    if (!cfg?.cifrada) {
+      corpo.replaceChildren(h('div', { class: 'cartao' },
+        h('p', { texto: 'Para importar com IA, salve a chave do Garry.' }),
+        h('p', { class: 'discreto', texto: 'É a mesma chave que o Garry usa (grátis no openrouter.ai/keys). Fica cifrada na sua conta.' }),
+        h('button', { class: 'botao principal cheio', style: 'margin-top:12px', onclick: () => { d.close(); abrirAjustes(); }, texto: 'Abrir Ajustes' })));
+      return;
+    }
+    if (est.revisao) { corpo.replaceChildren(...telaDeRevisao()); return; }
+    const modo = (m, rotulo) => h('button', { type: 'button', class: 'entrada-modo', 'aria-pressed': String(est.modo === m), disabled: est.lendo ? true : null, onclick: () => { est.modo = m; est.erro = ''; desenharImportacao(); } }, rotulo);
+    const partes = [h('div', { class: 'entrada-modos imp-modos', role: 'group', 'aria-label': 'Importar de' }, modo('imagem', 'Imagem'), modo('texto', 'Texto'))];
+    if (est.modo === 'imagem') {
+      const escolher = h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'imp-arquivo', 'aria-label': 'Escolher imagens do treino' });
+      escolher.addEventListener('change', () => adicionarArquivos(escolher.files ?? []));
+      partes.push(
+        h('label', { class: 'imp-solta', 'data-vazia': est.imagens.length === 0 ? 'sim' : null }, escolher, icone('imagem'),
+          h('b', { texto: est.imagens.length === 0 ? 'Escolher fotos ou prints' : 'Mais uma imagem' }),
+          h('span', { texto: 'ou arraste para cá, ou cole (Ctrl+V). Um dia por imagem, até 6.' })),
+        est.imagens.length > 0 ? h('div', { class: 'imp-fotos' }, est.imagens.map((img, i) => h('figure', { class: 'imp-foto' },
+          h('img', { src: img.url, alt: `Imagem ${i + 1}: ${img.nome}` }),
+          h('button', { class: 'imp-foto-tirar', type: 'button', 'aria-label': `Tirar a imagem ${i + 1}`, disabled: est.lendo ? true : null, onclick: () => { est.imagens.splice(i, 1); desenharImportacao(); } }, icone('fechar'))))) : null);
+    } else {
+      const campo = h('textarea', { class: 'campo imp-texto', rows: '10', placeholder: 'Cole aqui o treino, do jeito que estiver. Ex.:\nSegunda — Peito e ombros\nSupino inclinado — 3x8-12 — 30kg\nElevação lateral — 3x12 — 10kg\nDescanso 2 minutos', 'aria-label': 'Texto do treino' });
+      campo.value = est.texto;
+      campo.addEventListener('input', () => { est.texto = campo.value; });
+      partes.push(campo);
+    }
+    partes.push(h('p', { class: 'erro', role: 'alert', texto: est.erro }));
+    partes.push(est.lendo
+      ? h('div', { class: 'imp-lendo', role: 'status' }, h('i', { class: 'imp-giro', 'aria-hidden': 'true' }), h('span', { texto: est.modo === 'imagem' ? 'Lendo as imagens… pode levar até um minuto.' : 'Lendo o treino…' }))
+      : h('button', { class: 'botao principal cheio', onclick: interpretar }, icone('ia'), 'Interpretar treino'));
+    partes.push(h('p', { class: 'pequeno imp-rodape', texto: 'A IA só transcreve o que estiver escrito: o que faltar fica em branco para você completar. Nada é salvo antes de você revisar.' }));
+    corpo.replaceChildren(...partes.filter(Boolean));
+  }
+
+  function telaDeRevisao() {
+    const rev = est.revisao;
+    const atual = planoTreino();
+    const msg = h('p', { class: 'erro', role: 'alert' });
+    const total = rev.dias.reduce((n, x) => n + x.exercicios.length, 0);
+    const dias = rev.dias.map((dia, iDia) => cartaoDoDiaImportado(dia, iDia, atual));
+    return [
+      h('p', { class: 'imp-resumo', texto: `Li ${rev.dias.length} ${rev.dias.length === 1 ? 'treino' : 'treinos'} e ${total} exercícios. Confira e corrija o que precisar: nada foi salvo ainda.` }),
+      rev.aviso ? h('p', { class: 'imp-aviso', texto: `A IA avisou: ${rev.aviso}` }) : null,
+      ...dias,
+      msg,
+      h('button', { class: 'botao principal cheio imp-salvar', onclick: () => salvar(msg), texto: rev.dias.length === 1 ? 'Salvar o treino' : `Salvar os ${rev.dias.length} treinos` }),
+      h('button', { class: 'botao texto', style: 'margin:8px auto 0;display:block', onclick: () => { est.revisao = null; desenharImportacao(); }, texto: 'Voltar e ler de novo' }),
+    ].filter(Boolean);
+  }
+
+  function cartaoDoDiaImportado(dia, iDia, atual) {
+    const dias = est.revisao.dias;
+    const qual = h('select', { class: 'campo', 'aria-label': `Dia da semana de ${dia.nome}` },
+      h('option', { value: '', selected: dia.diaSemana === null ? true : null, texto: 'Escolha o dia' }),
+      [1, 2, 3, 4, 5, 6, 0].map((n) => h('option', { value: String(n), selected: dia.diaSemana === n ? true : null, texto: NOMES_DOS_DIAS[n] })));
+    qual.addEventListener('change', () => { dia.diaSemana = qual.value === '' ? null : Number(qual.value); desenharImportacao(); });
+    const nome = h('input', { class: 'campo', value: dia.nome, 'aria-label': 'Nome do treino' });
+    nome.addEventListener('input', () => { dia.nome = nome.value; });
+    const antigo = dia.diaSemana === null ? null : atual.dias.find((x) => x.diaSemana === dia.diaSemana);
+    const repetido = dia.diaSemana !== null && dias.filter((x) => x.diaSemana === dia.diaSemana).length > 1;
+    const lista = h('div', { class: 'imp-lista' }, dia.exercicios.map((x, i) => linhaImportada(dia, x, i)));
+    ligarArrasto(lista, dia);
+    return h('section', { class: 'cartao imp-dia', 'data-sem-dia': dia.diaSemana === null ? 'sim' : null },
+      h('div', { class: 'imp-dia-topo' },
+        h('label', { class: 'ed-sub' }, h('span', { texto: 'Dia' }), qual),
+        h('button', { class: 'botao icone', type: 'button', 'aria-label': `Não importar ${dia.nome}`, onclick: () => { dias.splice(iDia, 1); if (dias.length === 0) est.revisao = null; desenharImportacao(); } }, icone('fechar'))),
+      h('label', { class: 'ed-sub' }, h('span', { texto: 'Nome do treino' }), nome),
+      dia.diaSemana === null ? h('p', { class: 'imp-aviso', texto: 'A imagem não diz o dia: escolha acima.' }) : null,
+      repetido ? h('p', { class: 'imp-aviso', texto: `Outro treino importado também está na ${NOMES_DOS_DIAS[dia.diaSemana].toLowerCase()}.` }) : null,
+      antigo ? h('p', { class: 'imp-troca', texto: `Vai trocar o treino atual de ${NOMES_DOS_DIAS[dia.diaSemana].toLowerCase()} ("${antigo.nome}"). O que já foi feito nos treinos continua no histórico.` }) : null,
+      dia.nota ? h('p', { class: 'imp-nota-dia', texto: dia.nota }) : null,
+      lista,
+      h('button', {
+        class: 'botao cheio ed-novo', onclick: () => {
+          dia.exercicios.push({ chave: novoId(), nome: '', series: null, faixa: null, repsFeitas: null, cargas: null, aquecimento: [], descansoS: null, metodo: null, nota: '', confianca: 'alta', usarId: null, achado: null, existentes: dia.exercicios[0]?.existentes ?? [] });
+          desenharImportacao();
+          corpo.querySelectorAll('.imp-dia')[iDia]?.querySelector('.imp-ex:last-child .imp-nome')?.focus();
+        }, texto: '+ Exercício',
+      }));
+  }
+
+  function linhaImportada(dia, x, i) {
+    const duvida = x.confianca === 'baixa';
+    const nome = h('input', { class: 'campo imp-nome', value: x.nome, 'aria-label': `Exercício ${i + 1}`, placeholder: 'Nome do exercício' });
+    nome.addEventListener('input', () => { x.nome = nome.value; });
+    nome.addEventListener('change', () => {
+      // nome corrigido: confere de novo se e um exercicio que a pessoa ja tem
+      x.achado = corresponder(x.nome, x.existentes);
+      x.usarId = x.achado?.ex.id ?? null;
+      desenharImportacao();
+    });
+    const numeroCampo = (rotulo, valor, padrao, aoMudar) => {
+      const c = h('input', { class: 'campo', inputmode: 'numeric', value: valor ?? '', placeholder: padrao, 'aria-label': rotulo });
+      c.addEventListener('input', () => aoMudar(c.value.trim()));
+      return h('label', { class: 'ed-sub' }, h('span', { texto: rotulo }), c);
+    };
+    const series = numeroCampo('Séries', x.series, '3 · padrão', (v) => { const n = Math.round(Number(v)); x.series = v && n >= 1 && n <= 10 ? n : null; });
+    const min = numeroCampo('Reps mín.', x.faixa?.min, '8 · padrão', (v) => { const n = Math.round(Number(v)); x.faixa = v && n > 0 ? { min: n, max: Math.max(n, x.faixa?.max ?? n) } : null; });
+    const max = numeroCampo('Reps máx.', x.faixa?.max, '12 · padrão', (v) => { const n = Math.round(Number(v)); if (v && n > 0 && x.faixa) x.faixa = { min: Math.min(x.faixa.min, n), max: n }; else if (v && n > 0) x.faixa = { min: n, max: n }; });
+    const carga = h('input', { class: 'campo', inputmode: 'decimal', value: textoDasCargas(x.cargas), placeholder: 'kg', 'aria-label': 'Carga (uma por série: 40/35/30)' });
+    carga.addEventListener('input', () => { const ns = lerNumeros(carga.value); x.cargas = ns.length > 0 ? ns : null; });
+    const descanso = h('select', { class: 'campo', 'aria-label': 'Descanso' },
+      h('option', { value: '', selected: x.descansoS ? null : true, texto: 'Pelo feeling' }),
+      [...new Set([...DESCANSOS, ...(x.descansoS ? [x.descansoS] : [])])].sort((a, b) => a - b).map((s) => h('option', { value: String(s), selected: x.descansoS === s ? true : null, texto: relogio(s) })));
+    descanso.addEventListener('change', () => { x.descansoS = descanso.value ? Number(descanso.value) : null; });
+    const metodo = h('select', { class: 'campo', 'aria-label': 'Método' },
+      h('option', { value: '', selected: x.metodo ? null : true, texto: 'Normal' }),
+      Object.entries(METODOS).map(([id, m]) => h('option', { value: id, selected: x.metodo === id ? true : null, texto: m.nome })));
+    metodo.addEventListener('change', () => { x.metodo = metodo.value || null; });
+    const aquec = h('input', { class: 'campo', value: textoDoAquecimento(x.aquecimento), placeholder: 'ex.: 20×12, 30×8', 'aria-label': 'Aquecimento' });
+    aquec.addEventListener('input', () => { x.aquecimento = lerAquecimento(aquec.value); });
+    const nota = h('input', { class: 'campo', value: x.nota ?? '', placeholder: 'Nota (execução, RIR, técnica)', 'aria-label': 'Nota' });
+    nota.addEventListener('input', () => { x.nota = nota.value; });
+
+    // Se e um exercicio que a pessoa ja tem (o historico continua) ou um novo; nunca troca calado.
+    const usado = x.usarId ? x.existentes.find((e) => e.id === x.usarId) : null;
+    const escolher = h('select', { class: 'campo imp-escolher', 'aria-label': 'É um exercício que você já tem?' },
+      h('option', { value: '', selected: usado ? null : true, texto: usado ? 'Não é esse: exercício novo' : 'É um do seu treino? Escolher…' }),
+      x.existentes.map((e) => h('option', { value: e.id, selected: usado?.id === e.id ? true : null, texto: `${e.nome} (${e.dia})` })));
+    escolher.addEventListener('change', () => {
+      const e = x.existentes.find((y) => y.id === escolher.value) ?? null;
+      x.usarId = e?.id ?? null;
+      if (e && !x.achado) x.nome = e.nome; // escolhido da lista: fica o nome que ja estava no treino
+      desenharImportacao();
+    });
+    const vinculo = usado
+      ? h('p', { class: 'imp-vinculo', 'data-tipo': x.achado?.confianca === 'alta' ? 'igual' : 'parecido' }, icone('check'),
+        h('span', { texto: x.achado?.confianca === 'media' ? `Parece "${usado.nome}": o histórico continua` : `Já está no seu treino: o histórico continua` }))
+      : h('p', { class: 'imp-vinculo', 'data-tipo': 'novo' }, h('span', { texto: 'Exercício novo' }));
+
+    const mover = (delta) => {
+      const j = i + delta;
+      if (j < 0 || j >= dia.exercicios.length) return;
+      [dia.exercicios[i], dia.exercicios[j]] = [dia.exercicios[j], dia.exercicios[i]];
+      desenharImportacao();
+    };
+    return h('div', { class: 'imp-ex', 'data-chave': x.chave, 'data-confianca': x.confianca },
+      h('div', { class: 'imp-linha' },
+        h('button', { class: 'imp-arrastar', type: 'button', 'aria-label': `Mudar a ordem de ${x.nome || 'exercício'} (arraste, ou use as setas)` }, icone('arrastar')),
+        vinculo,
+        h('button', { class: 'botao icone', type: 'button', 'aria-label': 'Subir', disabled: i === 0 ? true : null, onclick: () => mover(-1) }, icone('cima')),
+        h('button', { class: 'botao icone', type: 'button', 'aria-label': 'Descer', disabled: i === dia.exercicios.length - 1 ? true : null, onclick: () => mover(1) }, icone('baixo')),
+        h('button', { class: 'botao icone', type: 'button', 'aria-label': `Tirar ${x.nome || 'exercício'}`, onclick: () => { dia.exercicios.splice(i, 1); desenharImportacao(); } }, icone('fechar'))),
+      nome,
+      duvida ? h('p', { class: 'imp-duvida', texto: 'A IA não teve certeza desta linha: confira.' }) : null,
+      x.existentes.length > 0 ? escolher : null,
+      h('div', { class: 'imp-campos' }, series, min, max),
+      h('div', { class: 'imp-campos imp-campos-2' },
+        h('label', { class: 'ed-sub' }, h('span', { texto: 'Carga (kg)' }), carga),
+        h('label', { class: 'ed-sub' }, h('span', { texto: 'Descanso' }), descanso)),
+      h('div', { class: 'imp-campos imp-campos-2' },
+        h('label', { class: 'ed-sub' }, h('span', { texto: 'Método' }), metodo),
+        h('label', { class: 'ed-sub' }, h('span', { texto: 'Aquecimento' }), aquec)),
+      nota);
+  }
+
+  // Arrastar pela alca: a linha segue o dedo e troca de lugar com as vizinhas; ao soltar, a ordem fica.
+  function ligarArrasto(lista, dia) {
+    lista.addEventListener('pointerdown', (ev) => {
+      const alca = ev.target.closest('.imp-arrastar');
+      if (!alca) return;
+      const linha = alca.closest('.imp-ex');
+      ev.preventDefault();
+      try { alca.setPointerCapture(ev.pointerId); } catch { /* sem captura: a janela ouve igual */ }
+      linha.dataset.arrastando = 'sim';
+      let ultimoY = ev.clientY;
+      const mover = (e) => {
+        ultimoY = e.clientY;
+        const irmas = [...lista.children].filter((x) => x !== linha);
+        const depois = irmas.find((x) => { const r = x.getBoundingClientRect(); return ultimoY < r.top + r.height / 2; });
+        if (depois) { if (linha.nextElementSibling !== depois) lista.insertBefore(linha, depois); } else if (lista.lastElementChild !== linha) lista.append(linha);
+      };
+      const soltar = () => {
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+        window.removeEventListener('pointercancel', soltar);
+        delete linha.dataset.arrastando;
+        const ordem = [...lista.children].map((x) => x.dataset.chave);
+        dia.exercicios.sort((a, b) => ordem.indexOf(a.chave) - ordem.indexOf(b.chave));
+        desenharImportacao();
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+      window.addEventListener('pointercancel', soltar);
+    });
+  }
+
+  desenharImportacao();
+}
+
 function abrirEditor(diaSemana) {
   const plano = planoTreino();
   let treino = structuredClone(treinoDoDia(plano, diaSemana)) ?? { id: novoId(), diaSemana, nome: NOMES_DOS_DIAS[diaSemana], nota: '', exercicios: [] };
@@ -1871,6 +2202,7 @@ function abrirEditor(diaSemana) {
     h('div', { class: 'ed-grupo' },
       h('label', { class: 'ed-sub' }, h('span', { texto: 'Dia da semana' }), qualDia),
       h('label', { class: 'ed-sub' }, h('span', { texto: 'Nome do treino' }), nome)),
+    h('button', { class: 'botao cheio imp-entrada', type: 'button', onclick: () => abrirImportacao() }, icone('ia'), 'Importar treino com IA'),
     h('h2', { class: 'secao', texto: 'Exercícios' }),
     h('p', { class: 'ed-dica', texto: 'Na ordem em que você faz. Toque num exercício para mudar.' }),
     lista,

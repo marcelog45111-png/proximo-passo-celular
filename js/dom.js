@@ -36,6 +36,9 @@ const CAMINHOS = {
   cardio: 'M3 12h4l2.2-5 4.2 10 2.4-5H21',
   liberada: 'M8 11V7.5a4 4 0 0 1 7.6-1.7M6 11h12v9H6ZM12 14.5v2',
   seguir: 'M5 12h14M13 6l6 6-6 6',
+  imagem: 'M4 5h16v14H4ZM4 16l5-5 4 4 3-3 4 4M15 9h.01',
+  ia: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9ZM19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8Z',
+  arrastar: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   grafico: 'M4 20h16M7 16v-4M12 16V7M17 16v-7',
 };
 

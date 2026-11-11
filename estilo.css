@@ -1085,3 +1085,55 @@ div.cardio-item { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
 .codigo-explica { margin: 0 0 14px; font-size: 0.92rem; line-height: 1.4; color: var(--texto); }
 .codigo-caixa { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; padding: 14px; border-radius: 16px; background: var(--cartao-2); font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 1.02rem; font-weight: 600; letter-spacing: 0.06em; text-align: center; user-select: all; -webkit-user-select: all; }
 .codigo-caixa span { padding: 4px 0; border-radius: 8px; background: var(--cartao); }
+
+/* importar treino com IA (11/11/2026) */
+.imp-entrada { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 6px; }
+.imp-entrada svg { width: 18px; height: 18px; color: var(--tinta); }
+.imp { display: grid; gap: 12px; }
+.imp-modos { margin: 0; }
+.imp-solta { position: relative; display: grid; justify-items: center; gap: 6px; padding: 22px 16px; border-radius: 18px; border: 1.5px dashed var(--sep); background: var(--cartao); text-align: center; cursor: pointer; }
+.imp-solta[data-vazia="sim"] { padding: 40px 16px; }
+.imp-solta svg { width: 30px; height: 30px; color: var(--tinta); }
+.imp-solta b { font-size: 1rem; }
+.imp-solta span { font-size: 0.8rem; color: var(--texto-2); }
+.imp[data-solta="sim"] .imp-solta { border-color: var(--tinta); background: color-mix(in srgb, var(--tinta) 10%, var(--cartao)); }
+.imp-arquivo { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.imp-fotos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.imp-foto { position: relative; margin: 0; aspect-ratio: 3 / 4; border-radius: 12px; overflow: hidden; background: var(--cartao-2); }
+.imp-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.imp-foto-tirar { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: #fff; }
+.imp-foto-tirar svg { width: 16px; height: 16px; }
+.imp-texto { min-height: 220px; font-family: inherit; line-height: 1.4; resize: vertical; }
+.imp .erro:empty { display: none; }
+.imp-lendo { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; border-radius: 999px; background: var(--cartao-2); font-size: 0.9rem; color: var(--texto); }
+.imp-giro { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid var(--sep); border-top-color: var(--tinta); animation: imp-gira 0.8s linear infinite; }
+@keyframes imp-gira { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .imp-giro { animation-duration: 2.4s; } }
+.imp .botao.principal svg { width: 18px; height: 18px; margin-right: 6px; vertical-align: -3px; }
+.imp-rodape { text-align: center; margin: 0; }
+.imp-resumo { margin: 0; font-size: 0.92rem; color: var(--texto); }
+.imp-aviso { margin: 0; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--laranja) 14%, transparent); color: var(--texto); font-size: 0.84rem; }
+.imp-troca, .imp-nota-dia { margin: 0; font-size: 0.8rem; color: var(--texto-2); }
+.imp-dia { display: grid; gap: 10px; }
+.imp-dia[data-sem-dia="sim"] { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--laranja) 60%, transparent); }
+.imp-dia-topo { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; align-items: end; }
+.imp-lista { display: grid; gap: 8px; }
+.imp-ex { display: grid; gap: 8px; padding: 10px; border-radius: 16px; background: var(--cartao-2); }
+.imp-ex[data-confianca="baixa"] { box-shadow: inset 3px 0 0 var(--laranja); }
+.imp-ex[data-arrastando="sim"] { opacity: 0.85; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45), inset 0 0 0 1.5px var(--tinta); }
+.imp-linha { display: grid; grid-template-columns: 32px minmax(0, 1fr) 40px 40px 40px; gap: 2px; align-items: center; margin: -4px -2px -2px; }
+.imp-linha .botao.icone { min-width: 40px; min-height: 44px; padding: 0; }
+.imp-linha .imp-vinculo { min-width: 0; }
+.imp-linha .imp-vinculo span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-arrastar { display: grid; place-items: center; min-height: 44px; color: var(--texto-3); cursor: grab; touch-action: none; }
+.imp-arrastar svg { width: 20px; height: 20px; stroke-width: 3.2; }
+.imp-nome { font-weight: 600; }
+.imp-duvida { margin: 0; font-size: 0.78rem; color: var(--laranja); }
+.imp-vinculo { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 0.78rem; color: var(--texto-2); }
+.imp-vinculo svg { width: 14px; height: 14px; flex: none; color: var(--tinta); }
+.imp-vinculo[data-tipo="parecido"] svg { color: var(--ciano); }
+.imp-escolher { font-size: 0.82rem; min-height: 40px; }
+.imp-campos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.imp-campos-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.imp-campos .campo, .imp-ex .campo { min-width: 0; }
+.imp-salvar { margin-top: 4px; }
