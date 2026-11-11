@@ -5,7 +5,7 @@ import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifr
 import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
-  completoNaSessao, FAIXA_PADRAO, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS, treinoComAquecimento, MUSCULOS, grupoDoExercicio, analiseDoExercicio, seriesDeTrabalho, ajusteEntreSeries,
+  completoNaSessao, FAIXA_PADRAO, INTENSIDADES_DO_CARDIO, resumoDoCardio, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS, treinoComAquecimento, MUSCULOS, grupoDoExercicio, analiseDoExercicio, seriesDeTrabalho, ajusteEntreSeries,
   resultadoDoExercicio, roteiro, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
 import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
@@ -230,11 +230,14 @@ function progressoInicial(n) {
  * Titulo grande do iOS: rola com a tela e, quando some, o nome aparece pequeno
  * na barra fixa de cima (com o vidro do sistema por tras).
  */
-function barraNav(titulo, progresso = null) {
+// O Editar treino virou um lapis no canto de cima, a esquerda (11/11/2026, "quero que editar
+// treino fosse um lapis no canto superior esquerdo"): fica a mao em qualquer ponto da tela.
+function barraNav(titulo, progresso = null, editar = null) {
   return h('div', { class: 'barra-nav' },
+    editar ? h('button', { class: 'botao-redondo botao-editar', type: 'button', 'aria-label': editar.rotulo, onclick: editar.abrir }, icone('lapis')) : null,
     h('span', { class: 'titulo-nav', 'aria-hidden': 'true', texto: titulo }),
     progresso !== null ? h('span', { class: 'nav-progresso', 'aria-hidden': 'true' }, h('i', { style: `transform:scaleX(${progresso})` })) : null,
-    h('button', { class: 'botao-redondo', 'aria-label': 'Ajustes e sincronização', onclick: abrirAjustes }, icone('ajustes'), h('span', { class: 'ponto-sync' })));
+    h('button', { class: 'botao-redondo nav-ajustes', 'aria-label': 'Ajustes e sincronização', onclick: abrirAjustes }, icone('ajustes'), h('span', { class: 'ponto-sync' })));
 }
 
 function cabeca(titulo, subtitulo = '') {
@@ -324,7 +327,7 @@ function centrarDia(faixaAntes) {
 const planoTreino = () => lerPlanoTreino(app.estado.config.treinoPlano ?? '{"dias":[]}');
 const chaveSessao = (dia) => `treinoSessao:${dia}`;
 const sessaoDe = (dia) => lerSessao(app.estado.config[chaveSessao(dia)] ?? null)
-  ?? { dia, treinoId: null, exercicios: {}, cardio: null, encerrados: [], semAquecimento: [], aquecer: {}, atualizadoEm: '' };
+  ?? { dia, treinoId: null, exercicios: {}, cardios: [], cardio: null, encerrados: [], semAquecimento: [], aquecer: {}, atualizadoEm: '' };
 // O treino do dia com o aquecimento pensado pelo dia inteiro (treinoComAquecimento): a ordem
 // em que os exercicios foram feitos hoje, o que cada musculo ja levou, o que foi treinado
 // ontem e anteontem e a carga de hoje de cada exercicio.
@@ -334,8 +337,11 @@ const treinoAnotado = (diaSemana, sessao = sessaoDe(hoje()), agora = null) => tr
 
 function gravarSessao(sessao) {
   sessao.atualizadoEm = new Date().toISOString();
+  sessao.cardio = resumoDoCardio(sessao.cardios ?? []);
   mudar((e) => definirConfig(e, chaveSessao(sessao.dia), JSON.stringify(sessao)));
 }
+
+const editarODia = () => ({ rotulo: `Editar o treino de ${NOMES_DOS_DIAS[app.diaTreino].toLowerCase()}`, abrir: () => abrirEditor(app.diaTreino) });
 
 function telaTreino() {
   const plano = planoTreino();
@@ -393,8 +399,8 @@ function telaTreino() {
   const sessoes = sessoesDoConfig(app.estado.config);
 
   if (treino === null) {
-    dadosDaBarra = { chave: `descanso-${app.diaTreino}`, placas: [] };
-    const tela = h('main', { class: 'tela' }, barraNav(`${NOMES_DOS_DIAS[app.diaTreino]}: descanso`), faixa,
+    dadosDaBarra = { chave: `descanso-${app.diaTreino}`, placas: [], cardio: cardioDaBarra(sessao) };
+    const tela = h('main', { class: 'tela' }, barraNav(`${NOMES_DOS_DIAS[app.diaTreino]}: descanso`, null, editarODia()), faixa,
       h('section', { class: 'palco', 'aria-label': 'Descanso' },
         h('p', { class: 'palco-data', texto: dataPorExtenso(dataDoDia) }),
         h('h1', { class: 'titulo-grande', texto: 'Descanso' }),
@@ -429,7 +435,7 @@ function telaTreino() {
     return h('div', { class: 'numero' }, h('b', {}, b, resto ? h('small', { texto: resto }) : null), h('span', { texto: rotulo }));
   };
   const tela = h('main', { class: 'tela' },
-    barraNav(treino.nome, fracao),
+    barraNav(treino.nome, fracao, editarODia()),
     faixa,
     h('section', { class: 'palco', 'aria-label': `Progresso de ${treino.nome}`, 'data-fechado': fechado ? 'sim' : null },
       h('p', { class: 'palco-data', texto: dataPorExtenso(dataDoDia) }),
@@ -450,7 +456,6 @@ function telaTreino() {
   treino.exercicios.forEach((ex, i) => tela.append(cartaoExercicio(ex, sessao, sessoes, dia, treino.id, i, ex.id === atual)));
 
   tela.append(cartaoCardio(sessao));
-  tela.append(h('button', { class: 'botao cheio botao-rodape', onclick: () => abrirEditor(app.diaTreino), texto: 'Editar treino' }));
   return tela;
 }
 
@@ -536,7 +541,7 @@ function telaDeOutraSemana(plano, faixa, data, dia) {
     ? (treinou ? `Registrado em ${dataPorExtenso(data)}. Só para ver: o que você marca conta sempre para hoje.` : 'Nada registrado neste dia.')
     : doTreino ? `Prévia do treino de ${NOMES_DOS_DIAS[ds].toLowerCase()}. No dia, ele aparece aqui para você fazer.` : 'Dia de descanso no plano.';
   const tela = h('main', { class: 'tela' },
-    barraNav(titulo),
+    barraNav(titulo, null, editarODia()),
     faixa,
     h('section', { class: 'palco', 'aria-label': titulo },
       h('p', { class: 'palco-data', texto: dataPorExtenso(data) }),
@@ -580,6 +585,7 @@ function telaDeOutraSemana(plano, faixa, data, dia) {
         u?.series?.length ? h('p', { class: 'discreto', texto: `Última vez: ${new Set(u.series.map((x) => x.carga)).size === 1 ? `${u.series.map((x) => x.reps).join(', ')} reps · ${kg(u.series[0].carga)}` : textoDasSeries(u.series)}` }) : null));
     });
   }
+  if (passado && sessao.cardios.length > 0) tela.append(cartaoCardio(sessao, { soLeitura: true }));
   tela.append(h('button', { class: 'botao cheio botao-rodape', onclick: voltarParaEstaSemana, texto: 'Voltar para esta semana' }));
   return tela;
 }
@@ -595,6 +601,7 @@ let cenaFalhou = false;
 function dadosDaBarraDe(treino, sessao, dia) {
   return {
     chave: `${treino.id}|${dia}`,
+    cardio: cardioDaBarra(sessao),
     placas: treino.exercicios.map((e) => ({
       id: e.id,
       p: completoNaSessao(e, sessao) ? 1 : Math.min(0.95, seriesDeTrabalho(sessao.exercicios[e.id]).length / roteiro(e).filter((x) => x.t !== 'a').length),
@@ -882,27 +889,161 @@ function marcarEncerrado(exId, sim) {
   gravarSessao(s);
 }
 
-function cartaoCardio(sessao) {
-  const c = sessao.cardio;
-  const tipo = h('select', { class: 'campo', 'aria-label': 'Tipo de cardio' },
-    ['Esteira', 'Bicicleta', 'Escada', 'Elíptico', 'Caminhada', 'Corrida', 'Outro'].map((t) => h('option', { value: t, selected: c?.tipo === t ? true : null, texto: t })));
-  const minutos = h('input', { class: 'campo', inputmode: 'numeric', placeholder: 'Minutos', value: c?.minutos ?? '', 'aria-label': 'Minutos' });
-  const kcal = h('input', { class: 'campo', inputmode: 'numeric', placeholder: 'kcal', value: c?.kcal ?? '', 'aria-label': 'Calorias ativas' });
-  return h('section', { class: 'cartao' },
-    h('p', { class: 'ex-nome', texto: 'Cardio' }),
-    h('p', { class: 'ex-linha', texto: c ? `Hoje: ${c.tipo || 'cardio'} · ${n0(c.minutos)} min${c.kcal ? ` · ${n0(c.kcal)} kcal` : ''}` : 'Copie do Apple Watch (app Atividade) quando terminar.' }),
-    h('div', { class: 'ed-linha', style: 'margin-top:10px' }, tipo, minutos, kcal),
-    h('button', {
-      class: 'botao cheio', style: 'margin-top:10px', onclick: () => {
-        const min = Number(minutos.value.replace(',', '.'));
-        if (!Number.isFinite(min) || min <= 0) { minutos.focus(); return; }
-        const k = Number(kcal.value.replace(',', '.'));
+// ---------- cardio (11/11/2026, "melhorar a parte do cardio, podendo ser adicional") ----------
+// Cardio e extra: o cartao nao cobra nada, so registra. Da para por mais de um no dia
+// (esteira e depois bicicleta). A meta e opcional e vale para todo dia: com ela, o anel do
+// cartao e a pegada da barra 3D enchem ate a meta; sem ela, acendem quando houver cardio.
+
+const TIPOS_DE_CARDIO = ['Esteira', 'Bicicleta', 'Escada', 'Elíptico', 'Caminhada', 'Corrida', 'Outro'];
+const MINUTOS_RAPIDOS = [10, 15, 20, 30, 45, 60];
+const METAS_DE_CARDIO = [0, 15, 20, 30, 45, 60];
+const metaDoCardio = () => { const v = Number(app.estado.config.cardioMeta); return Number.isFinite(v) && v > 0 ? v : null; };
+const minutosDeCardio = (sessao) => (sessao.cardios ?? []).reduce((n, c) => n + c.minutos, 0);
+function fracaoDoCardio(sessao) {
+  const total = minutosDeCardio(sessao);
+  if (total <= 0) return 0;
+  const meta = metaDoCardio();
+  return meta ? Math.min(1, total / meta) : 1;
+}
+const cardioDaBarra = (sessao) => ({ f: fracaoDoCardio(sessao), meta: metaDoCardio() !== null });
+const numeroDoCampo = (t) => { const v = Number(String(t).replace(',', '.')); return String(t).trim() !== '' && Number.isFinite(v) && v > 0 ? v : null; };
+
+function cartaoCardio(sessao, { soLeitura = false } = {}) {
+  const lista = sessao.cardios ?? [];
+  const total = minutosDeCardio(sessao);
+  const kcal = lista.reduce((n, c) => n + (c.kcal ?? 0), 0);
+  const meta = metaDoCardio();
+  const fracao = fracaoDoCardio(sessao);
+  const chave = soLeitura ? `cardio-${sessao.dia}` : 'cardio';
+
+  const raio = 24;
+  const volta = 2 * Math.PI * raio;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 56 56');
+  svg.setAttribute('class', 'cardio-anel-svg');
+  svg.innerHTML = `<defs><linearGradient id="grad-cardio" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff7a59"/><stop offset="1" stop-color="#ffc24a"/></linearGradient></defs>
+    <circle class="trilho" cx="28" cy="28" r="${raio}"/><circle class="cheio" cx="28" cy="28" r="${raio}" stroke-dasharray="${volta}" stroke-dashoffset="${volta}"/>`;
+  movimento.anel(svg.querySelector('.cheio'), volta, fracao, `anel-${chave}`);
+  const minutos = h('b');
+  movimento.contar(minutos, `${chave}-min`, total, n0);
+
+  const subtitulo = lista.length === 0
+    ? 'Extra: registre só se fizer.'
+    : [meta ? (total >= meta ? `meta de ${meta} min batida` : `faltam ${n0(meta - total)} min da meta`) : null, kcal > 0 ? `${n0(kcal)} kcal` : null, lista.length > 1 ? `${lista.length} registros` : null].filter(Boolean).join(' · ') || (lista[0].tipo || 'Cardio');
+  const nomeDaIntensidade = (c) => (c.intensidade ? INTENSIDADES_DO_CARDIO[c.intensidade] : null);
+  return h('section', { class: 'cartao cartao-cardio', 'aria-label': 'Cardio', 'data-feito': total > 0 ? 'sim' : null },
+    h('div', { class: 'cardio-topo' },
+      h('div', { class: 'cardio-anel', 'aria-hidden': 'true' }, svg, icone('cardio')),
+      h('div', { class: 'cardio-titulo' },
+        h('p', { class: 'ex-nome', texto: 'Cardio' }),
+        h('p', { class: 'ex-linha', texto: subtitulo })),
+      total > 0
+        ? h('div', { class: 'cardio-total', 'aria-label': `${n0(total)} minutos de cardio` }, minutos, h('small', { texto: 'min' }))
+        : h('span', { class: 'chip cardio-extra', texto: 'Extra' })),
+    lista.length === 0 ? null : h('ul', { class: 'cardio-lista' }, lista.map((c) => {
+      const info = [nomeDaIntensidade(c), c.kcal ? `${n0(c.kcal)} kcal` : null].filter(Boolean).join(' · ');
+      const dentro = [
+        h('span', { class: 'cardio-item-tipo', texto: c.tipo || 'Cardio' }),
+        info ? h('span', { class: 'cardio-item-info', texto: info }) : null,
+        h('b', { class: 'cardio-item-min', texto: `${n0(c.minutos)} min` }),
+        soLeitura ? null : icone('avancar'),
+      ];
+      return h('li', {}, soLeitura
+        ? h('div', { class: 'cardio-item' }, dentro)
+        : h('button', { class: 'cardio-item', type: 'button', 'aria-label': `${c.tipo || 'Cardio'}, ${n0(c.minutos)} minutos${info ? `, ${info}` : ''}. Editar`, onclick: () => abrirCardio(c.id) }, dentro));
+    })),
+    soLeitura ? null : h('button', { class: 'botao cheio cardio-mais', type: 'button', onclick: () => abrirCardio(null) },
+      icone('mais'), lista.length === 0 ? 'Adicionar cardio' : 'Adicionar outro cardio'));
+}
+
+/** Pilulas que trocam na hora (sem redesenhar a folha); a luz desliza para a escolhida. */
+function pilulas(chave, rotulo, opcoes, valor, escolher) {
+  const grupo = h('div', { class: 'ed-chips', role: 'group', 'aria-label': rotulo, 'data-chave': chave }, h('span', { class: 'ed-chip-luz', 'aria-hidden': 'true' }));
+  const botoes = opcoes.map(([v, nome]) => h('button', {
+    class: 'ed-chip', type: 'button', 'aria-pressed': String(v === valor), texto: nome,
+    onclick: () => { marcar(v); escolher(v); },
+  }));
+  const marcar = (v) => {
+    opcoes.forEach(([o], k) => botoes[k].setAttribute('aria-pressed', String(o === v)));
+    movimento.pilulaDosChips(grupo, chave);
+  };
+  grupo.append(...botoes);
+  return { el: grupo, marcar };
+}
+
+/** Registrar um cardio novo (id null) ou mudar um que ja esta no dia. */
+function abrirCardio(id) {
+  const sessao = sessaoDe(hoje());
+  const antigo = id ? (sessao.cardios ?? []).find((c) => c.id === id) ?? null : null;
+  // Um novo comeca como o ultimo que a pessoa fez (hoje ou em outro dia).
+  const ultimo = (sessao.cardios ?? []).at(-1) ?? sessoesDoConfig(app.estado.config).find((s) => (s.cardios ?? []).length > 0)?.cardios.at(-1) ?? null;
+  const base = antigo ?? ultimo;
+  const atual = { tipo: base?.tipo || 'Esteira', intensidade: base?.intensidade ?? 'moderada', meta: metaDoCardio() ?? 0 };
+
+  const secao = (titulo, ...filhos) => h('div', { class: 'ed-secao' }, h('p', { class: 'ed-titulo', texto: titulo }), ...filhos);
+  const tipo = pilulas('cardio-tipo', 'Tipo de cardio', TIPOS_DE_CARDIO.map((t) => [t, t]), atual.tipo, (v) => { atual.tipo = v; });
+
+  const campoMin = h('input', { class: 'campo ed-passo-valor', inputmode: 'numeric', enterkeyhint: 'done', value: String(antigo?.minutos ?? base?.minutos ?? 20), 'aria-label': 'Minutos' });
+  const rapidos = pilulas('cardio-min', 'Minutos rápidos', MINUTOS_RAPIDOS.map((m) => [m, `${m} min`]), numeroDoCampo(campoMin.value), (v) => {
+    const d = v - (numeroDoCampo(campoMin.value) ?? 0);
+    campoMin.value = String(v);
+    movimento.numeroMudou(campoMin, d);
+  });
+  const mexer = (d) => {
+    const v = Math.max(1, Math.min(300, Math.round((numeroDoCampo(campoMin.value) ?? 0) + d)));
+    campoMin.value = String(v);
+    movimento.numeroMudou(campoMin, d);
+    rapidos.marcar(v);
+  };
+  campoMin.addEventListener('focus', () => campoMin.select());
+  campoMin.addEventListener('input', () => rapidos.marcar(numeroDoCampo(campoMin.value)));
+  const passoMin = h('div', { class: 'ed-passo cardio-passo' },
+    h('button', { class: 'ed-passo-botao', type: 'button', 'aria-label': 'Menos 5 minutos', onclick: () => mexer(-5) }, icone('menos')),
+    h('div', { class: 'cardio-passo-valor' }, campoMin, h('small', { texto: 'min' })),
+    h('button', { class: 'ed-passo-botao', type: 'button', 'aria-label': 'Mais 5 minutos', onclick: () => mexer(5) }, icone('mais')));
+
+  const intensidade = pilulas('cardio-intensidade', 'Intensidade', Object.entries(INTENSIDADES_DO_CARDIO), atual.intensidade, (v) => { atual.intensidade = v; });
+  const campoKcal = h('input', { class: 'campo', inputmode: 'numeric', enterkeyhint: 'done', placeholder: 'Opcional', value: antigo?.kcal ?? '', 'aria-label': 'Calorias ativas' });
+  const meta = pilulas('cardio-meta', 'Meta de cardio por dia', METAS_DE_CARDIO.map((m) => [m, m === 0 ? 'Sem meta' : `${m} min`]), atual.meta, (v) => { atual.meta = v; });
+
+  const tirar = antigo ? h('button', {
+    class: 'botao texto perigo cheio', type: 'button', onclick: (ev) => {
+      if (ev.currentTarget.dataset.certeza !== 'sim') { ev.currentTarget.dataset.certeza = 'sim'; ev.currentTarget.textContent = 'Tocar de novo para tirar'; return; }
+      const s = sessaoDe(hoje());
+      s.cardios = (s.cardios ?? []).filter((c) => c.id !== antigo.id);
+      gravarSessao(s);
+      d.close();
+    }, texto: 'Tirar este cardio',
+  }) : null;
+
+  const d = folha(antigo ? 'Editar cardio' : 'Adicionar cardio', [
+    h('div', { class: 'cartao cardio-folha' },
+      secao('Tipo', tipo.el),
+      secao('Quanto tempo', passoMin, rapidos.el),
+      secao('Intensidade', intensidade.el),
+      secao('Calorias ativas', campoKcal, h('p', { class: 'cardio-dica', texto: 'Se usar o Apple Watch, copie do app Atividade.' })),
+      secao('Meta por dia', meta.el, h('p', { class: 'cardio-dica', texto: 'Opcional. Com meta, o anel do cardio e a barra enchem até ela.' }))),
+    tirar,
+  ], {
+    acao: {
+      nome: 'Salvar', fazer: () => {
+        const min = numeroDoCampo(campoMin.value);
+        if (min === null) { campoMin.focus(); movimento.nega(campoMin); return false; }
+        if (atual.meta !== (metaDoCardio() ?? 0)) mudar((e) => definirConfig(e, 'cardioMeta', String(atual.meta)));
         const s = sessaoDe(hoje());
-        s.cardio = { tipo: tipo.value, minutos: min, kcal: Number.isFinite(k) && k > 0 ? k : null };
+        const novo = { id: antigo?.id ?? `c${Date.now().toString(36)}`, tipo: atual.tipo, minutos: Math.round(min), kcal: numeroDoCampo(campoKcal.value), intensidade: atual.intensidade };
+        s.cardios = antigo ? (s.cardios ?? []).map((c) => (c.id === antigo.id ? novo : c)) : [...(s.cardios ?? []), novo];
         gravarSessao(s);
-        desenhar();
-      }, texto: c ? 'Atualizar cardio' : 'Salvar cardio',
-    }));
+        return true;
+      },
+    },
+    aoFechar: () => desenhar(),
+  });
+  d.classList.add('folha-cardio');
+  requestAnimationFrame(() => {
+    for (const grupo of d.querySelectorAll('.ed-chips')) movimento.pilulaDosChips(grupo, grupo.dataset.chave);
+    movimento.cardioAbriu(d);
+  });
 }
 
 // descanso entre as series
@@ -1502,13 +1643,13 @@ function contextoDoGarry() {
         };
       }),
     },
-    cardioHoje: sessao.cardio,
+    cardioHoje: sessao.cardios,
     ultimosTreinos: sessoes.slice(0, 6).map((s) => ({
       dia: s.dia,
       treino: plano.dias.find((d) => d.id === s.treinoId)?.nome ?? null,
       series: Object.values(s.exercicios).flat().filter((x) => x.reps > 0 && x.t !== 'a').length,
       volumeKg: Math.round(volume(Object.values(s.exercicios).flat().filter((x) => x.reps > 0))),
-      cardio: s.cardio,
+      cardio: s.cardios,
     })),
     semana: plano.dias.map((d) => `${NOMES_DOS_DIAS[d.diaSemana]}: ${d.nome}`),
     dieta: {

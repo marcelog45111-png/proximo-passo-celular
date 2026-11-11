@@ -32,6 +32,8 @@ const CAMINHOS = {
   parar: 'M7 7h10v10H7Z',
   voltar: 'M15 5l-7 7 7 7',
   avancar: 'M9 5l7 7-7 7',
+  lapis: 'M4 20h4.5L19.3 9.2a2.1 2.1 0 0 0 0-3L17.8 4.7a2.1 2.1 0 0 0-3 0L4 15.5V20ZM13.5 6l4.5 4.5',
+  cardio: 'M3 12h4l2.2-5 4.2 10 2.4-5H21',
   liberada: 'M8 11V7.5a4 4 0 0 1 7.6-1.7M6 11h12v9H6ZM12 14.5v2',
   seguir: 'M5 12h14M13 6l6 6-6 6',
 };

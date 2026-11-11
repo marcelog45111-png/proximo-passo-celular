@@ -84,9 +84,9 @@ export function contar(el, chave, fim, formatar = (v) => String(Math.round(v))) 
 }
 
 /** O anel e as barras da dieta crescem a partir de onde estavam. */
-export function anel(circulo, volta, fracao) {
-  const antes = ultimos.get('anel') ?? 0;
-  ultimos.set('anel', fracao);
+export function anel(circulo, volta, fracao, chave = 'anel') {
+  const antes = ultimos.get(chave) ?? 0;
+  ultimos.set(chave, fracao);
   circulo.setAttribute('stroke-dashoffset', String(volta * (1 - fracao)));
   if (!pode() || antes === fracao) return;
   g().fromTo(circulo, { attr: { 'stroke-dashoffset': volta * (1 - antes) } }, { attr: { 'stroke-dashoffset': volta * (1 - fracao) }, duration: 0.9, ease: 'power3.out' });
@@ -266,6 +266,12 @@ export function pilulaDosChips(grupo, chave) {
   }
   g().fromTo(luz, { x: antes.x, width: antes.w }, { x, width: w, duration: 0.42, ease: 'back.out(1.5)' });
   g().fromTo(ativo, { scale: 0.94 }, { scale: 1, duration: 0.35, ease: 'back.out(3)', clearProps: 'transform' });
+}
+
+/** A folha do cardio: as secoes sobem em fila. */
+export function cardioAbriu(folha) {
+  if (!pode()) return;
+  g().from(folha.querySelectorAll('.cardio-folha .ed-secao, .folha-corpo > .botao'), { y: 14, autoAlpha: 0, duration: 0.4, stagger: 0.04, delay: 0.1, ease: 'power3.out', clearProps: 'all' });
 }
 
 /** Trocou de semana: os seis dias entram do lado para onde a pessoa foi. */

@@ -7,7 +7,7 @@
 // o Sincronizador, no fim do arquivo.
 
 /** Configuracoes que o celular le ou grava. O resto do banco passa e e esquecido. */
-const CONFIGS = ['planoAlimentar', 'perfilNutricao', 'iaBaseUrl', 'iaModelo', 'treinoPlano'];
+const CONFIGS = ['planoAlimentar', 'perfilNutricao', 'iaBaseUrl', 'iaModelo', 'treinoPlano', 'cardioMeta'];
 const PREFIXOS = ['iaModelo:', 'iaChave:', 'treinoSessao:'];
 export const guardaConfig = (nome) => CONFIGS.includes(nome) || PREFIXOS.some((p) => nome.startsWith(p));
 

@@ -96,6 +96,27 @@ export function lerPlanoTreino(texto) {
   };
 }
 
+export const INTENSIDADES_DO_CARDIO = { leve: 'Leve', moderada: 'Moderada', forte: 'Forte' };
+const umCardio = (c, i) => {
+  const minutos = numero(c?.minutos);
+  if (minutos === null || minutos <= 0) return null;
+  const kcal = numero(c.kcal);
+  return {
+    id: typeof c.id === 'string' && c.id !== '' ? c.id : `c${i + 1}`,
+    tipo: typeof c.tipo === 'string' ? c.tipo : '',
+    minutos,
+    kcal: kcal !== null && kcal > 0 ? kcal : null,
+    intensidade: c.intensidade in INTENSIDADES_DO_CARDIO ? c.intensidade : null,
+  };
+};
+
+/** A soma do dia: { tipo: 'Esteira + Bicicleta', minutos, kcal } ou null sem cardio. */
+export function resumoDoCardio(cardios) {
+  if (!Array.isArray(cardios) || cardios.length === 0) return null;
+  const kcal = cardios.reduce((n, c) => n + (c.kcal ?? 0), 0);
+  return { tipo: [...new Set(cardios.map((c) => c.tipo || 'Cardio'))].join(' + '), minutos: cardios.reduce((n, c) => n + c.minutos, 0), kcal: kcal > 0 ? kcal : null };
+}
+
 export function lerSessao(texto) {
   try {
     const s = typeof texto === 'string' ? JSON.parse(texto) : texto;
@@ -104,12 +125,16 @@ export function lerSessao(texto) {
     for (const [id, lista] of Object.entries(s.exercicios ?? {})) {
       if (Array.isArray(lista)) exercicios[id] = lista.map(serie);
     }
-    const minutos = numero(s.cardio?.minutos);
+    // Cardio e extra e pode ter mais de um no dia (11/11/2026, "melhorar a parte do cardio,
+    // podendo ser adicional"). Sessao de antes disso: o `cardio` unico vira o primeiro da lista.
+    const cardios = (Array.isArray(s.cardios) ? s.cardios : s.cardio ? [s.cardio] : []).map(umCardio).filter((c) => c !== null);
     return {
       dia: s.dia,
       treinoId: typeof s.treinoId === 'string' ? s.treinoId : null,
       exercicios,
-      cardio: minutos !== null ? { minutos, kcal: numero(s.cardio.kcal), tipo: typeof s.cardio.tipo === 'string' ? s.cardio.tipo : '' } : null,
+      cardios,
+      // o resumo de sempre (soma do dia), para quem ainda le so ele
+      cardio: resumoDoCardio(cardios),
       // exercicios que a pessoa encerrou antes de fazer o roteiro inteiro
       encerrados: (Array.isArray(s.encerrados) ? s.encerrados : []).filter((id) => typeof id === 'string'),
       // exercicios em que a pessoa pulou o aquecimento hoje

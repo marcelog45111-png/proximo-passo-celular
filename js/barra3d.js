@@ -14,6 +14,7 @@ const COR_A = new THREE.Color('#39e27a');
 const COR_B = new THREE.Color('#5bd4e4');
 const COR_FANTASMA = new THREE.Color('#7f8b86');
 const COR_BORRACHA = new THREE.Color('#333b37');
+const COR_CARDIO = new THREE.Color('#ff8a4c');
 
 // A barra e mais curta que uma olimpica de verdade: no celular, o que importa sao as anilhas.
 const INICIO_LUVA = 1.9;
@@ -157,6 +158,50 @@ export function criarCena() {
     camera.lookAt(ALVO);
     pedir();
   };
+
+  // ---------- o cardio (11/11/2026) ----------
+  // O cardio do dia acende a pegada da barra, do meio para os colares: meia pegada = metade da
+  // meta. Sem meta, acende inteira quando houver cardio. Com meta e sem cardio, fica so o trilho.
+  const PEGADA = 3.36; // de colar a colar (os colares estao em +-1,8)
+  const geoPegada = new THREE.CylinderGeometry(0.094, 0.094, 1, 32, 1, true);
+  geoPegada.rotateZ(Math.PI / 2);
+  const matPegada = new THREE.MeshBasicMaterial({ color: COR_CARDIO, transparent: true, opacity: 0, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  const matTrilho = new THREE.MeshBasicMaterial({ color: COR_CARDIO, transparent: true, opacity: 0, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+  const pegada = new THREE.Mesh(geoPegada, matPegada);
+  const trilhoDaPegada = new THREE.Mesh(geoPegada, matTrilho);
+  trilhoDaPegada.scale.x = PEGADA;
+  // o three.js do app e enxuto (sem TorusGeometry): a ponta e uma cinta curta e um pouco mais grossa
+  const geoPonta = new THREE.CylinderGeometry(0.112, 0.112, 0.034, 40, 1, true);
+  geoPonta.rotateZ(Math.PI / 2);
+  const matPonta = new THREE.MeshBasicMaterial({ color: COR_CARDIO, transparent: true, opacity: 0, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+  const pontas = [-1, 1].map((lado) => { const m = new THREE.Mesh(geoPonta, matPonta); m.userData.lado = lado; return m; });
+  barra.add(trilhoDaPegada, pegada, ...pontas);
+  const cardio = { v: 0, alvo: 0, meta: false, brilho: 0.62 };
+  function desenharCardio() {
+    const f = cardio.v;
+    pegada.visible = f > 0.002;
+    pegada.scale.x = Math.max(0.001, f * PEGADA);
+    matPegada.opacity = cardio.brilho;
+    matTrilho.opacity = cardio.meta ? 0.07 : 0;
+    for (const m of pontas) {
+      m.visible = f > 0.002;
+      m.position.x = m.userData.lado * f * PEGADA / 2;
+    }
+    matPonta.opacity = Math.min(1, cardio.brilho + 0.3);
+    pedir();
+  }
+  function mudarCardio(c) {
+    const f = Math.max(0, Math.min(1, c?.f ?? 0));
+    cardio.meta = Boolean(c?.meta);
+    if (f === cardio.alvo) { desenharCardio(); return; }
+    const antes = cardio.alvo;
+    cardio.alvo = f;
+    const gs = g();
+    if (!gs || menosMovimento()) { cardio.v = f; desenharCardio(); return; }
+    gs.to(cardio, { v: f, duration: 1.1, ease: 'power3.out', onUpdate: desenharCardio });
+    // bateu a meta (ou o primeiro cardio sem meta): a pegada pisca
+    if (f === 1 && antes < 1) gs.fromTo(cardio, { brilho: 1 }, { brilho: 0.62, duration: 1.2, delay: 0.7, ease: 'power2.out', onUpdate: desenharCardio });
+  }
 
   // ---------- as anilhas ----------
 
@@ -394,8 +439,9 @@ export function criarCena() {
       medir(host);
     },
 
-    /** dados: { chave, placas: [{id, p}] } com p de 0 a 1. */
-    mostrar({ chave, placas }) {
+    /** dados: { chave, placas: [{id, p}], cardio?: {f, meta} } com p e f de 0 a 1. */
+    mostrar({ chave, placas, cardio: c = null }) {
+      mudarCardio(c);
       const todas = placas.length > 0 && placas.every((pl) => pl.p === 1);
       const mudouDeTreino = chave !== chaveAtual || placas.length !== anilhas.length || placas.some((pl, i) => pl.id !== anilhas[i].id);
       if (mudouDeTreino) {
