@@ -66,6 +66,7 @@ const app = {
   // Semana vista na faixa (10/11/2026): 0 = esta, -1 = a passada, +1 = a que vem.
   semana: 0,
   abertos: new Set(), // exercicios fechados que a pessoa reabriu
+  recolhidos: new Set(), // exercicios abertos que a pessoa recolheu tocando no nome (o da vez tambem)
   efeito: null, // o que acabou de mudar e merece animar depois do proximo desenho
 };
 
@@ -307,7 +308,7 @@ function depoisDeMontar(tela, entrou) {
   app.efeito = null;
   if (efeito === null) return;
   const cartao = efeito.ex ? tela.querySelector(`[data-ex="${CSS.escape(efeito.ex)}"]`) : null;
-  if (cartao && efeito.fechou) movimento.cartaoFechou(cartao, efeito.altura, tela.querySelector('.exercicio.atual'));
+  if (cartao && efeito.fechou) movimento.cartaoFechou(cartao, efeito.altura, efeito.ficar ? null : tela.querySelector('.exercicio.atual'));
   if (cartao && efeito.abriu) movimento.cartaoAbriu(cartao, efeito.altura);
 }
 
@@ -738,6 +739,7 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
       onclick: () => {
         app.efeito = { ex: ex.id, abriu: true, altura: cartao.offsetHeight };
         app.abertos.add(ex.id);
+        app.recolhidos.delete(ex.id);
         desenhar();
       },
     },
@@ -753,14 +755,14 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
 
   // Os que ainda vem depois comecam minimizados (10/11/2026, 'todas as series, menos a primeira,
   // comecem minimizadas'): so o nome, a meta de hoje e a chance de evoluir. Tocar abre.
-  if (!completo && !atual && !app.abertos.has(ex.id)) {
+  if (!completo && (app.recolhidos.has(ex.id) || (!atual && !app.abertos.has(ex.id)))) {
     const trabalho = plano.passos.filter((p) => !p.t);
     const cargaMeta = trabalho[0]?.alvo.carga ?? 0;
     cartao.classList.add('fechado', 'minimizado');
     cartao.append(h('button', {
       class: 'ex-resumo', 'aria-expanded': 'false',
       'aria-label': `${ex.nome}: ${trabalho.length} séries, meta ${kg(cargaMeta)}${analise.chance ? `, chance de evoluir hoje ${analise.chance.nivel}` : ''}. Abrir`,
-      onclick: () => { app.efeito = { ex: ex.id, abriu: true, altura: cartao.offsetHeight }; app.abertos.add(ex.id); desenhar(); },
+      onclick: () => { app.efeito = { ex: ex.id, abriu: true, altura: cartao.offsetHeight }; app.abertos.add(ex.id); app.recolhidos.delete(ex.id); desenhar(); },
     },
     h('span', { class: 'ex-num-mini', 'aria-hidden': 'true', texto: String(indice + 1).padStart(2, '0') }),
     h('span', { class: 'ex-resumo-texto' },
@@ -772,9 +774,17 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     return cartao;
   }
 
+  // Tocar no nome recolhe o cartao (11/11/2026, "ao clicar no nome do exercicio ele minimizasse e se
+  // clicasse de novo ele voltava"); a linha recolhida abre de novo. Fica no lugar (nao rola para o proximo).
+  const recolher = () => {
+    app.efeito = { ex: ex.id, fechou: true, ficar: true, altura: cartao.offsetHeight };
+    app.abertos.delete(ex.id);
+    app.recolhidos.add(ex.id);
+    desenhar();
+  };
   cartao.append(h('div', { class: 'ex-topo' },
     h('span', { class: 'ex-num', 'aria-hidden': 'true', texto: String(indice + 1).padStart(2, '0') }),
-    h('h3', { class: 'ex-nome', texto: ex.nome }),
+    h('h3', { class: 'ex-nome' }, h('button', { class: 'ex-nome-botao', type: 'button', 'aria-expanded': 'true', 'aria-label': `${ex.nome}: recolher`, onclick: recolher }, ex.nome, icone('cima'))),
     h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
   if (metodo) cartao.append(h('p', { class: 'ex-metodo' }, h('b', { texto: metodo.nome }), ` ${metodo.resumo}`));
   if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
@@ -852,7 +862,7 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
       },
       texto: rotuloDoTirar(ex),
     }) : null,
-    completo || !atual ? h('button', { class: 'botao texto', onclick: () => { app.abertos.delete(ex.id); desenhar(); }, texto: 'Recolher' }) : null,
+    completo || !atual ? h('button', { class: 'botao texto', onclick: recolher, texto: 'Recolher' }) : null,
     h('button', { class: 'botao texto', onclick: () => abrirHistorico(ex), texto: 'Histórico' })));
   return cartao;
 }
