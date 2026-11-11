@@ -2080,7 +2080,33 @@ async function perguntar(texto) {
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
 setInterval(() => { if (document.visibilityState === 'visible') sincronizar(); }, 30_000);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+// A versao nova chega sozinha (11/11/2026, "pra mim no celular nao foi"). O app na Tela de Inicio volta do
+// segundo plano sem recarregar: ao voltar, procura um service worker novo; quando ele assume, a pagina
+// recarrega com o codigo novo. Nunca no meio de uma serie ou com uma folha aberta: espera fechar.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const tinhaVersao = navigator.serviceWorker.controller !== null;
+  let registro = null;
+  let recarregar = false;
+  const recarregarSePuder = () => {
+    if (!recarregar) return;
+    if (document.querySelector('dialog[open]')) return; // a serie ou uma folha aberta: depois
+    recarregar = false;
+    location.reload();
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!tinhaVersao) return; // a primeira instalacao nao precisa recarregar
+    recarregar = true;
+    recarregarSePuder();
+  });
+  document.addEventListener('close', recarregarSePuder, true); // fechou a serie/folha: agora pode
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') registro?.update().catch(() => {});
+    else recarregarSePuder();
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then((r) => { registro = r; })
+    .catch(() => {});
+}
 
 (async () => {
   try {
