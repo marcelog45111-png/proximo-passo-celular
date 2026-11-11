@@ -7,7 +7,7 @@
 // cada serie vem o veredito (subiu, igual, abaixo) e o descanso; no fim, a conta que
 // libera ou nao a carga do PROXIMO treino. As regras moram em treino.js: aqui e so tela.
 
-import { campoNumero, h, icone, numeroBr, selo } from './dom.js';
+import { campoNumero, h, icone, numeroBr, selo, cargaReps } from './dom.js';
 import { intervaloAntes, METODOS, planoDeHoje, regraDaCarga, regraDaSerie, relogio, resultadoDoExercicio, veredito } from './treino.js';
 import * as movimento from './movimento.js';
 
@@ -106,7 +106,7 @@ export function abrirJogo(partida, aoFechar) {
       return h('li', {}, h('button', {
         class: `fase-pilula${p.t === 'a' ? ' aquecimento' : ''}`, 'data-estado': i === atual ? 'atual' : f ? 'feita' : pulada ? 'pulada' : 'pendente', 'data-tipo': v?.tipo ?? (f ? 'igual' : null),
         'aria-current': i === atual ? 'step' : null,
-        'aria-label': `${p.rotulo}${f ? `: ${kg(f.carga)} × ${f.reps}${v ? `, ${v.tipo === 'nova' ? 'primeiro registro' : v.texto}` : ''}` : pulada ? ': pulado' : ''}`,
+        'aria-label': `${p.rotulo}${f ? `: ${f.reps} reps com ${kg(f.carga)}${v ? `, ${v.tipo === 'nova' ? 'primeiro registro' : v.texto}` : ''}` : pulada ? ': pulado' : ''}`,
         onclick: () => mostrarPasso(i, i < atual ? -1 : 1),
       }, h('span', { texto: p.curto })));
     }));
@@ -213,7 +213,7 @@ export function abrirJogo(partida, aoFechar) {
 
     // A meta e o treino anterior num cartao so: o que vale hoje em cima, a referencia embaixo.
     const anterior = aquecendo ? null : passo.base
-      ? h('p', { class: 'jogo-anterior' }, h('span', { texto: 'Treino anterior' }), h('b', { texto: `${kg(passo.base.carga)} × ${passo.base.reps}` }), h('span', { class: 'jogo-quando', texto: o.quando ?? '' }), passo.base.seg ? h('span', { class: 'jogo-quando', texto: `em ${relogio(passo.base.seg)}` }) : null)
+      ? h('p', { class: 'jogo-anterior' }, h('span', { texto: 'Treino anterior' }), h('b', {}, cargaReps(passo.base.carga, passo.base.reps)), h('span', { class: 'jogo-quando', texto: o.quando ?? '' }), passo.base.seg ? h('span', { class: 'jogo-quando', texto: `em ${relogio(passo.base.seg)}` }) : null)
       : h('p', { class: 'jogo-anterior' }, h('span', { texto: 'Treino anterior' }), h('b', { class: 'sem', texto: 'ainda não tem' }));
     // Antes da primeira serie de trabalho: a chance de evoluir hoje e o porque (analiseDoExercicio).
     const analise = o.analise ?? null;
@@ -228,7 +228,7 @@ export function abrirJogo(partida, aoFechar) {
       : null;
     const cartaoMeta = h('div', { class: 'jogo-meta', 'data-tipo': aquecendo ? 'aquecimento' : pl.tipo },
       h('span', { class: 'jogo-rotulo', texto: aquecendo ? 'Leve' : 'Meta' }),
-      h('b', { texto: `${kg(alvo.carga)} × ${alvo.reps}` }),
+      h('b', {}, cargaReps(alvo.carga, alvo.reps)),
       h('p', { texto: dicaDoPasso }),
       porque,
       anterior,
@@ -278,12 +278,14 @@ export function abrirJogo(partida, aoFechar) {
       trocarCorpo(
         titulo,
         h('div', { class: 'jogo-contando' },
-          tempo,
-          // A meta grande enquanto a serie roda (10/11/2026: 'a meta 13 reps grande pq ele ta escondendo').
+          // As repeticoes sao o numero grande enquanto a serie roda; o relogio vem embaixo, menor
+          // (10/11/2026: 'a meta 13 reps grande pq ele ta escondendo'; depois 'é mais importante
+          // quantas reps eu vou fazer do que o cronometro').
           h('div', { class: 'jogo-alvo', 'data-ate': regra.ate },
             h('span', { class: 'jogo-rotulo', texto: regra.ate === 'falha' ? 'Até a falha' : aquecendo ? 'Aquecimento' : 'Meta' }),
             h('b', {}, String(alvo.reps), h('small', { texto: ' reps' })),
             h('span', { class: 'jogo-alvo-carga', texto: `com ${kg(valor.carga)}` })),
+          h('div', { class: 'jogo-tempo' }, h('span', { class: 'jogo-rotulo', texto: 'Tempo da série' }), tempo),
           tipoDaSerie(),
           comoFazer),
         h('button', { class: 'botao cheio jogo-feito jogo-parar', onclick: parar }, icone('parar'), 'Parar série'),
@@ -309,7 +311,7 @@ export function abrirJogo(partida, aoFechar) {
     let sub = 'Na próxima, a meta é passar disso.';
     if (v.tipo === 'reps') sub = `Passou o treino anterior: ${passo.base.reps} → ${valor.reps}. Boa!`;
     if (v.tipo === 'carga') sub = `${kg(valor.carga)}: mais carga que da última vez. Boa!`;
-    if (v.tipo === 'igual') sub = `${kg(valor.carga)} × ${valor.reps}, como da última vez.`;
+    if (v.tipo === 'igual') sub = `${valor.reps} reps com ${kg(valor.carga)}, como da última vez.`;
     if (v.tipo === 'abaixo') {
       sub = valor.carga < passo.base.carga
         ? `Hoje ${kg(valor.carga)}; no treino anterior, ${kg(passo.base.carga)}.`
@@ -326,6 +328,7 @@ export function abrirJogo(partida, aoFechar) {
 
   function mostrarFim() {
     naTela = 'fim';
+    corpo.dataset.fase = 'fim';
     clearInterval(relogioDaSerie);
     const pl = plano();
     const lista = o.feitas();
@@ -362,7 +365,7 @@ export function abrirJogo(partida, aoFechar) {
           h('span', { texto: o.quando && o.quando !== 'anotado no plano' ? `contra o treino anterior (${o.quando})` : 'contra o que estava anotado' })),
       h('ol', { class: 'fim-lista' }, linhas.map(({ p, f }) => h('li', {},
         h('span', { texto: p.rotulo }),
-        h('b', { texto: `${kg(f.carga)} × ${f.reps}` }),
+        cargaReps(f.carga, f.reps),
         selo(veredito(f, p.base)) ?? h('span')))),
       caixa,
       proximo

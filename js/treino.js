@@ -390,7 +390,7 @@ export function textoDasSeries(series) {
   if (series.length === 0) return '';
   const cargas = [...new Set(series.map((s) => s.carga))];
   if (cargas.length === 1) return `${fmtKg(cargas[0])} · ${series.map((s) => s.reps).join(', ')}`;
-  return series.map((s) => `${fmtKg(s.carga)}×${s.reps}`).join(' · ');
+  return series.map((s) => `${s.reps} com ${fmtKg(s.carga)}`).join(' · ');
 }
 
 /** Volume (carga × repeticoes) de uma lista de series, para comparar treinos. */

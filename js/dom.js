@@ -31,6 +31,7 @@ const CAMINHOS = {
   comecar: 'M8 5.5v13l11-6.5Z',
   parar: 'M7 7h10v10H7Z',
   voltar: 'M15 5l-7 7 7 7',
+  avancar: 'M9 5l7 7-7 7',
   liberada: 'M8 11V7.5a4 4 0 0 1 7.6-1.7M6 11h12v9H6ZM12 14.5v2',
   seguir: 'M5 12h14M13 6l6 6-6 6',
 };
@@ -76,4 +77,13 @@ export function selo(v, classe = '') {
   if (!v) return null;
   const ic = ICONE_DO_VEREDITO[v.tipo];
   return h('span', { class: `selo${classe ? ` ${classe}` : ''}`, 'data-tipo': v.tipo }, ic ? icone(ic) : null, h('span', { texto: v.tipo === 'nova' ? 'Primeiro' : v.texto }));
+}
+
+// Uma serie na tela (10/11/2026, "nao gosto muito da ideia de 40kg x 10, e muito feio
+// visualmente"): as repeticoes primeiro, em negrito, e a carga ao lado numa etiqueta apagada.
+// `empilhado` poe a carga embaixo, para as colunas estreitas da tabela do cartao.
+export function cargaReps(carga, reps, { empilhado = false } = {}) {
+  return h('span', { class: `cr${empilhado ? ' empilhado' : ''}` },
+    h('span', { class: 'cr-reps' }, h('b', { texto: String(reps) }), h('small', { texto: reps === 1 ? 'rep' : 'reps' })),
+    h('span', { class: 'cr-kg', texto: `${numeroBr(carga)} kg` }));
 }

@@ -210,3 +210,66 @@ export function telaDeEntrada(tela) {
     tl.from([...tela.children].filter((f) => f !== marca), { y: 18, autoAlpha: 0, duration: 0.5, stagger: 0.07, ease: 'power3.out', clearProps: 'all' }, '-=0.5');
   });
 }
+
+// ---------- o Editar treino (10/11/2026) ----------
+// Tambem e uma folha por cima da tela: fora do contexto do desenho.
+
+/** O editor abre: o placar e as linhas dos exercicios entram em fila. */
+export function editorAbriu(folha) {
+  if (!pode()) return;
+  g().from(folha.querySelectorAll('.ed-placar, .ed-grupo, .ed-ex-linha, .ed-ex, .ed-novo'), { y: 16, autoAlpha: 0, duration: 0.45, stagger: 0.035, delay: 0.12, ease: 'power3.out', clearProps: 'all' });
+}
+
+/**
+ * A lista mudou (abriu, fechou, subiu, desceu, entrou ou saiu um exercicio): cada linha
+ * desliza de onde estava (FLIP), a que abriu cresce da altura de linha e as secoes
+ * dela entram em fila. `antes` = Map(id -> {top, h}) medido antes de redesenhar.
+ */
+export function editorMudou(lista, antes, abertoId) {
+  if (!pode()) return;
+  for (const el of lista.children) {
+    const a = antes.get(el.dataset.id);
+    if (!a) {
+      g().from(el, { y: 18, autoAlpha: 0, duration: 0.42, ease: 'power3.out', clearProps: 'all' });
+      continue;
+    }
+    const r = el.getBoundingClientRect();
+    const dy = a.top - r.top;
+    if (Math.abs(dy) > 1) g().from(el, { y: dy, duration: 0.45, ease: 'power3.out', clearProps: 'transform' });
+    if (Math.abs(a.h - r.height) > 1) {
+      g().fromTo(el, { height: a.h, overflow: 'hidden' }, { height: r.height, duration: 0.42, ease: 'power3.out', clearProps: 'height,overflow' });
+      if (el.dataset.id === abertoId) {
+        g().from(el.querySelectorAll('.ed-secao, .ed-botoes'), { y: 12, autoAlpha: 0, duration: 0.36, stagger: 0.04, delay: 0.08, ease: 'power3.out', clearProps: 'all' });
+      }
+    }
+  }
+}
+
+/** A luz das pilulas desliza da escolha anterior para a nova (a pilula que desliza do animation-components, em GSAP). */
+const pilulasAntes = new Map();
+export function pilulaDosChips(grupo, chave) {
+  const luz = grupo.querySelector('.ed-chip-luz');
+  const ativo = grupo.querySelector('[aria-pressed="true"]');
+  if (!luz) return;
+  if (!ativo) { luz.style.opacity = '0'; return; }
+  const x = ativo.offsetLeft;
+  const w = ativo.offsetWidth;
+  // a escolhida fica a vista dentro da fileira que rola de lado
+  const sobra = (grupo.clientWidth - w) / 2;
+  if (x < grupo.scrollLeft || x + w > grupo.scrollLeft + grupo.clientWidth) grupo.scrollLeft = Math.max(0, x - sobra);
+  const antes = pilulasAntes.get(chave);
+  pilulasAntes.set(chave, { x, w });
+  luz.style.opacity = '1';
+  if (!pode() || !antes || (antes.x === x && antes.w === w)) {
+    if (g()) g().set(luz, { x, width: w }); else { luz.style.width = `${w}px`; luz.style.transform = `translateX(${x}px)`; }
+    return;
+  }
+  g().fromTo(luz, { x: antes.x, width: antes.w }, { x, width: w, duration: 0.42, ease: 'back.out(1.5)' });
+  g().fromTo(ativo, { scale: 0.94 }, { scale: 1, duration: 0.35, ease: 'back.out(3)', clearProps: 'transform' });
+}
+
+/** Trocou de semana: os seis dias entram do lado para onde a pessoa foi. */
+export function semanaMudou(dias, direcao) {
+  if (!pode() || !dias) return;
+  g().from(dias.children, { x: 36 * direcao, autoAlpha: 0, duration: 0.38, stagger: { each: 0.03, from: direcao > 0 ? 'start' : 'end' }, ease: 'power3.out', clearProps: 'all' });
+}
