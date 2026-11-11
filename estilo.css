@@ -1049,3 +1049,27 @@ div.cardio-item { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
 .traj-ponto.escolhido { stroke: var(--texto); stroke-width: 2.5; stroke-opacity: 1; }
 .traj-ponto:focus-visible { stroke: var(--texto); stroke-width: 3; }
 .traj-legenda { margin: 6px 0 2px; font-size: 0.82rem; color: var(--texto); min-height: 1.3em; }
+
+/* o historico conectado com "Esta semana" (11/11/2026) */
+.ex-acoes { justify-content: center; gap: 0 22px; }
+.pl-linha.pl-foco { background: rgba(57, 226, 122, 0.06); border-radius: 12px; }
+.pl-linha.pl-foco .pl-nome { background: #16231c; color: var(--tinta); }
+.sem-cartao { margin-bottom: 12px; }
+.sem-lista { list-style: none; margin: 6px 0 0; padding: 0; }
+.sem-item { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 48px; border-top: 0.5px solid var(--sep); }
+.sem-item:first-child { border-top: 0; }
+.sem-item[data-vazia="sim"] { opacity: 0.55; }
+.sem-nome { display: grid; min-width: 0; }
+.sem-nome b { font-size: 0.86rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sem-item[data-atual="sim"] .sem-nome b { color: var(--tinta); }
+.sem-nome small, .sem-serie small { font-size: 0.7rem; color: var(--texto-3); }
+.sem-serie { display: grid; font-variant-numeric: tabular-nums; }
+.sem-serie b { font-size: 0.92rem; }
+.sem-serie.vazia { font-size: 0.8rem; color: var(--texto-3); }
+.sem-marca { display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; border-radius: 999px; background: var(--cartao-2); font-size: 0.72rem; color: var(--texto-2); white-space: nowrap; }
+.sem-marca svg { width: 12px; height: 12px; }
+.sem-marca[data-delta="sobe"] { color: var(--tinta); }
+.sem-marca[data-delta="cai"] { color: var(--laranja); }
+.sem-marca[data-recorde="sim"] { color: #ffd36a; background: rgba(255, 211, 106, 0.1); }
+.sem-ir { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 6px; }
+.sem-ir svg { width: 16px; height: 16px; }

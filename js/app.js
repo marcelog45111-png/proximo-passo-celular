@@ -883,7 +883,6 @@ function partidaDe(exId, comecarEm) {
       gravarSessao(s);
     },
     reabrir: () => marcarEncerrado(ex.id, false),
-    adicionar: () => adicionarSerie(ex, treino.id),
     remover: () => removerSerie(ex, treino.id),
     noPlano: () => roteiro(ex).length,
     descansar: (segundos, rotulo, texto) => comecarDescanso(segundos, rotulo, texto, { exId: ex.id, dia: app.diaTreino }),
@@ -940,20 +939,6 @@ function gravarSerie(ex, i, valor, treinoId) {
   s.exercicios[ex.id] = lista;
   s.treinoId = treinoId;
   gravarSessao(s);
-}
-
-/** Um passo a mais no fim do roteiro (serie, mini, pausa ou drop). Devolve a posicao dele. */
-function adicionarSerie(ex, treinoId) {
-  const s = sessaoDe(hoje());
-  fixarAquecimento(s, ex);
-  const lista = s.exercicios[ex.id] ?? [];
-  const minimo = roteiro(ex).length;
-  while (lista.length < minimo) lista.push(vazia(ex, lista.length));
-  lista.push(vazia(ex, lista.length));
-  s.exercicios[ex.id] = lista;
-  s.treinoId = treinoId;
-  gravarSessao(s);
-  return lista.length - 1;
 }
 
 /** Tira a ultima serie das que passaram do plano (as do plano nunca saem). Devolve se tirou. */
@@ -1262,7 +1247,7 @@ function comparacaoDaSemana(rotulo, agora, antes, fmt) {
     h('span', { class: 'evo-delta' }, icone(ICONE_DELTA[tipo]), `${fmt(antes)} antes`));
 }
 
-function abrirEvolucao() {
+function abrirEvolucao({ foco = null } = {}) {
   const plano = planoTreino();
   const sessoes = sessoesDoConfig(app.estado.config);
   const dia = hoje();
@@ -1322,7 +1307,7 @@ function abrirEvolucao() {
       corpo.push(h('div', { class: 'pl-grupo', role: 'row' }, h('span', { role: 'rowheader', texto: grupo })));
     }
     const temAlgo = l.celulas.some((c) => c !== null);
-    corpo.push(h('div', { class: 'pl-linha', role: 'row', 'data-vazia': temAlgo ? null : 'sim' },
+    corpo.push(h('div', { class: 'pl-linha', role: 'row', 'data-ex': l.id, 'data-vazia': temAlgo ? null : 'sim' },
       h('button', { class: 'pl-nome', role: 'rowheader', type: 'button', 'aria-label': `${l.nome}: ver a trajetória`, onclick: () => abrirHistorico(exPorId.get(l.id)) }, h('span', { texto: l.nome }), icone('avancar')),
       l.celulas.map((c, i) => (c === null
         ? h('span', { class: 'pl-celula vazia', role: 'cell', 'data-col': String(i), 'aria-label': 'não treinou', texto: '—' })
@@ -1376,6 +1361,8 @@ function abrirEvolucao() {
   rolagem.style.setProperty('--nome-largura', `${nomeLargura}px`);
   rolagem.scrollLeft = rolagem.scrollWidth;
   movimento.evolucaoAbriu(d);
+  // depois de a folha abrir (a rolagem pedida durante a abertura se perde)
+  if (foco) setTimeout(() => { if (d.open) focarLinhaDaPlanilha(d, foco); }, 380);
   // As colunas 3D depois do primeiro quadro (a folha ja tem tamanho); falhou, barras simples.
   requestAnimationFrame(() => {
     import('./evolucao3d.js')
@@ -1463,6 +1450,58 @@ function cartaoTrajetoria(ex, sessoes) {
   return cartao;
 }
 
+/** Acende a linha do exercicio na planilha da evolucao e a traz para o meio da folha. */
+function focarLinhaDaPlanilha(folhaEvolucao, exId) {
+  const linha = folhaEvolucao.querySelector(`.pl-linha[data-ex="${CSS.escape(exId)}"]`);
+  if (!linha) return;
+  for (const outra of folhaEvolucao.querySelectorAll('.pl-linha.pl-foco')) outra.classList.remove('pl-foco');
+  linha.classList.add('pl-foco');
+  linha.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  movimento.linhaAcesa(linha);
+}
+
+const NOME_DA_SEMANA = (s, i, total) => (s.atual ? 'Esta semana' : i === total - 2 ? 'Semana passada' : s.rotulo);
+
+/**
+ * O historico conectado com "Esta semana" (11/11/2026, "historico fica centralizado e mostra o historico
+ * CONECTADO (COM ESTA SEMANA), aproveita a funcao que ja tem"): a mesma conta da planilha da evolucao
+ * (planilhaSemanal), so a linha deste exercicio, da semana de agora para tras. Leva para a evolucao.
+ */
+function cartaoSemanaASemana(ex, todas) {
+  const { semanas, linhas } = planilhaSemanal(planoTreino(), todas, hoje(), 8);
+  const linha = linhas.find((l) => l.id === ex.id);
+  if (!linha) return null;
+  const primeira = linha.celulas.findIndex((c) => c !== null);
+  if (primeira === -1) return null;
+  const itens = [];
+  for (let i = semanas.length - 1; i >= primeira; i -= 1) {
+    const s = semanas[i];
+    const c = linha.celulas[i];
+    const marca = c === null ? null
+      : c.recorde ? h('span', { class: 'sem-marca', 'data-recorde': 'sim', texto: '★ recorde' })
+        : c.delta ? h('span', { class: 'sem-marca', 'data-delta': c.delta }, icone(ICONE_DELTA[c.delta]), c.delta === 'sobe' ? 'mais forte' : c.delta === 'cai' ? 'mais fraca' : 'igual')
+          : h('span', { class: 'sem-marca', texto: 'primeira vez' });
+    itens.push(h('li', { class: 'sem-item', 'data-atual': s.atual ? 'sim' : null, 'data-vazia': c === null ? 'sim' : null },
+      h('span', { class: 'sem-nome' }, h('b', { texto: NOME_DA_SEMANA(s, i, semanas.length) }), s.atual || i === semanas.length - 2 ? h('small', { texto: s.rotulo }) : null),
+      c === null
+        ? h('span', { class: 'sem-serie vazia', texto: s.atual ? 'ainda não treinou' : 'não treinou' })
+        : h('span', { class: 'sem-serie' }, h('b', { texto: `${numeroBr(c.carga)} × ${c.reps}` }), h('small', { texto: `${c.series} ${c.series === 1 ? 'série' : 'séries'}` })),
+      marca ?? h('span')));
+  }
+  const abrirNaEvolucao = () => {
+    // Veio da evolucao (folha embaixo): volta para ela, na linha deste exercicio. Senao, abre a evolucao.
+    const embaixo = document.querySelector('dialog.folha-evolucao[open]');
+    const aqui = [...document.querySelectorAll('dialog.folha[open]')].at(-1);
+    if (embaixo && aqui && aqui !== embaixo) { aqui.close(); focarLinhaDaPlanilha(embaixo, ex.id); return; }
+    aqui?.close();
+    abrirEvolucao({ foco: ex.id });
+  };
+  return h('section', { class: 'cartao sem-cartao', 'aria-label': 'Semana a semana' },
+    h('p', { class: 'pequeno', texto: 'Semana a semana · melhor série de cada semana' }),
+    h('ul', { class: 'sem-lista' }, itens),
+    h('button', { class: 'botao texto sem-ir', type: 'button', onclick: abrirNaEvolucao }, icone('grafico'), 'Ver com os outros exercícios'));
+}
+
 function abrirHistorico(ex) {
   const todas = sessoesDoConfig(app.estado.config);
   const linhas = todas
@@ -1472,10 +1511,11 @@ function abrirHistorico(ex) {
   const melhor = linhas.flatMap((l) => l.series).reduce((m, s) => (m === null || s.carga > m.carga || (s.carga === m.carga && s.reps > m.reps) ? s : m), null);
   folha(ex.nome, [
     cartaoTrajetoria(ex, todas),
+    cartaoSemanaASemana(ex, todas),
     melhor ? h('div', { class: 'cartao' }, h('p', { class: 'pequeno', texto: 'Melhor série' }), h('p', { class: 'ex-nome' }, cargaReps(melhor.carga, melhor.reps))) : null,
     linhas.length === 0
       ? h('p', { class: 'discreto', texto: ex.referencia ? `Ainda sem treino registrado aqui. Anotado: ${textoDasSeries(ex.referencia.reps.map((reps) => ({ carga: ex.referencia.carga, reps })))}` : 'Ainda sem treino registrado.' })
-      : h('div', { class: 'cartao' }, h('ul', { class: 'lista-simples historico' }, linhas.map((l, i) => {
+      : h('div', { class: 'cartao' }, h('p', { class: 'pequeno', texto: 'Cada treino' }), h('ul', { class: 'lista-simples historico' }, linhas.map((l, i) => {
         // contra o treino anterior do mesmo exercicio: subiu a carga, as repeticoes, igual ou abaixo
         const antes = linhas[i + 1] ?? null;
         const r = antes ? resultadoDoExercicio(ex, l.series, antes) : null;

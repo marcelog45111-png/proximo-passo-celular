@@ -317,3 +317,9 @@ export function trajetoriaEntrou(svg) {
   if (area) g().from(area, { autoAlpha: 0, duration: 0.6, delay: 0.7, ease: 'power1.out' });
   if (pontos.length > 0) g().from(pontos, { scale: 0, transformOrigin: '50% 50%', duration: 0.35, stagger: 0.9 / Math.max(1, pontos.length), ease: 'back.out(2)', clearProps: 'transform' });
 }
+
+/** A linha do exercicio na planilha acende e apaga devagar, para o olho achar onde esta. */
+export function linhaAcesa(linha) {
+  if (!pode() || !linha) return;
+  g().fromTo(linha, { backgroundColor: 'rgba(57, 226, 122, 0.22)' }, { backgroundColor: 'rgba(57, 226, 122, 0.06)', duration: 1.4, delay: 0.35, ease: 'power2.out' });
+}

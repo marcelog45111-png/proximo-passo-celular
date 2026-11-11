@@ -36,7 +36,7 @@ function prenderPagina() {
  * partida: {
  *   ex, indice, ultima, quando ('semana passada', 'anotado no plano' ou null), comecarEm (passo ou null),
  *   feitas(): a lista do dia, na ordem do roteiro; encerrado(): bool,
- *   gravar(i, {carga, reps}), desmarcar(i), encerrar(), reabrir(), adicionar(): indice novo,
+ *   gravar(i, {carga, reps}), desmarcar(i), encerrar(), reabrir(),
  *   remover(): tira a ultima serie a mais; noPlano(): quantos passos o plano tem,
  *   descansar(segundos | null), pararDescanso(),
  *   cena: { montar(host), atualizar(), foco(id) } | null,
@@ -385,11 +385,8 @@ export function abrirJogo(partida, aoFechar) {
       proximo
         ? h('button', { class: 'botao principal cheio jogo-feito', onclick: () => { if (!travado()) { travar(); carregar(proximo); } } }, h('span', { class: 'corta', texto: `Próximo: ${proximo.ex.nome}` }), icone('seguir'))
         : h('button', { class: 'botao principal cheio jogo-feito', onclick: () => { if (!travado()) d.close(); }, texto: 'Voltar ao treino' }),
+      // O "Mais uma série" saiu (11/11/2026, junto com o "Adicionar série" do cartão: "é inútil").
       h('div', { class: 'jogo-acoes' },
-        h('button', {
-          class: 'botao texto', onclick: () => { const novo = o.adicionar(); mudou = true; o.cena?.atualizar(); mostrarPasso(novo, 1); },
-          texto: METODOS[o.ex.metodo] ? 'Mais um passo' : 'Mais uma série',
-        }),
         proximo ? h('button', { class: 'botao texto', onclick: () => d.close(), texto: 'Voltar ao treino' }) : null));
     movimento.fimEntrou(corpo, liberada);
   }
