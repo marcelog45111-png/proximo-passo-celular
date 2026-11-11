@@ -6,7 +6,7 @@ import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
   completoNaSessao, FAIXA_PADRAO, INTENSIDADES_DO_CARDIO, resumoDoCardio, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS, treinoComAquecimento, MUSCULOS, grupoDoExercicio, analiseDoExercicio, seriesDeTrabalho, ajusteEntreSeries,
-  resultadoDoExercicio, roteiro, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
+  resultadoDoExercicio, roteiro, planilhaSemanal, resumoDaSemana, trajetoriaDoExercicio, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
 import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
 import { abrirChave, configDaIa, conversar } from './garry.js';
@@ -289,10 +289,14 @@ function desenhar() {
   // Entrada so ao trocar de aba ou de dia; marcar uma serie nao repete a tela inteira.
   const assinatura = `${app.aba}|${app.aba === 'treino' ? `${app.diaTreino}|${app.semana}` : ''}`;
   const entrou = assinatura !== assinaturaDaTela;
+  // So o dia ou a semana mudou, dentro do treino: entrada leve (trocaLeve), nao a da tela inteira.
+  const soODia = entrou && app.aba === 'treino' && assinaturaDaTela?.startsWith('treino|');
   assinaturaDaTela = assinatura;
   depoisDeMontar(tela, entrou);
+  const direcao = direcaoDaSemana;
   if (direcaoDaSemana !== 0) { movimento.semanaMudou(tela.querySelector('.dias'), direcaoDaSemana); direcaoDaSemana = 0; }
-  if (entrou && app.aba !== 'garry') movimento.entrada(tela);
+  if (soODia) movimento.trocaLeve(tela, direcao);
+  else if (entrou && app.aba !== 'garry') movimento.entrada(tela);
 }
 
 function depoisDeMontar(tela, entrou) {
@@ -373,7 +377,7 @@ function telaTreino() {
       return h('button', {
         class: 'dia', 'aria-pressed': String(ds === app.diaTreino), 'data-hoje': ehHoje ? 'sim' : null, 'data-feito': feito ? 'sim' : null,
         'aria-label': `${ehHoje ? 'Hoje, ' : ''}${NOMES_DOS_DIAS[ds]} ${Number(data.slice(8))}: ${doDia?.nome ?? (data < dia && app.semana < 0 ? 'nada registrado' : 'descanso')}${feito ? ', treinou' : ''}`,
-        onclick: () => { app.diaTreino = ds; desenhar(); },
+        onclick: () => { if (app.diaTreino === ds) return; app.diaTreino = ds; desenharLogo(); },
       },
       h('span', { class: 'dia-sigla', texto: ehHoje ? 'Hoje' : SIGLAS_DOS_DIAS[ds] }),
       h('b', { class: 'dia-num', texto: String(Number(data.slice(8))) }),
@@ -384,9 +388,9 @@ function telaTreino() {
     h('div', { class: 'semana-topo' },
       h('button', { class: 'semana-seta', type: 'button', 'aria-label': 'Semana anterior', onclick: () => trocarSemana(-1) }, icone('voltar')),
       h('button', {
-        class: 'semana-rotulo', type: 'button', 'aria-label': app.semana === 0 ? `${nomeDaSemana}, ${datasDaSemana}` : `${nomeDaSemana}, ${datasDaSemana}. Voltar para esta semana`,
-        'data-agora': app.semana === 0 ? 'sim' : null, onclick: () => voltarParaEstaSemana(),
-      }, h('b', { texto: nomeDaSemana }), h('span', { texto: datasDaSemana })),
+        class: 'semana-rotulo', type: 'button', 'aria-label': app.semana === 0 ? `${nomeDaSemana}, ${datasDaSemana}. Ver a evolução por semana` : `${nomeDaSemana}, ${datasDaSemana}. Voltar para esta semana`,
+        'data-agora': app.semana === 0 ? 'sim' : null, onclick: () => (app.semana === 0 ? abrirEvolucao() : voltarParaEstaSemana()),
+      }, h('b', {}, nomeDaSemana, app.semana === 0 ? icone('grafico') : null), h('span', { texto: datasDaSemana })),
       h('button', { class: 'semana-seta', type: 'button', 'aria-label': 'Próxima semana', onclick: () => trocarSemana(1) }, icone('avancar'))),
     dias);
   ligarDeslizeDaSemana(dias);
@@ -486,10 +490,17 @@ function rotuloDaSemana(n, segunda) {
 }
 
 let direcaoDaSemana = 0;
+let desenhoMarcado = false;
+/** Desenha no proximo quadro; pedidos seguidos no mesmo quadro viram um desenho so. */
+function desenharLogo() {
+  if (desenhoMarcado) return;
+  desenhoMarcado = true;
+  requestAnimationFrame(() => { desenhoMarcado = false; desenhar(); });
+}
 function trocarSemana(d) {
   app.semana = Math.max(-52, Math.min(52, app.semana + d));
   direcaoDaSemana = d;
-  desenhar();
+  desenharLogo();
 }
 function voltarParaEstaSemana() {
   if (app.semana === 0) return;
@@ -499,18 +510,50 @@ function voltarParaEstaSemana() {
   app.diaTreino = semanaHoje === 0 ? 1 : semanaHoje;
   desenhar();
 }
-/** Arrastar os dias para o lado troca de semana, como as setas. */
+/**
+ * Arrastar os dias para o lado troca de semana, como as setas. A faixa segue o dedo (so transform,
+ * no compositor); passou de 56 px, ela sai para o lado e a semana nova entra do outro. Antes nada
+ * mexia ate soltar e a tela inteira era refeita no mesmo quadro: parecia travado (11/11/2026).
+ */
 function ligarDeslizeDaSemana(el) {
   let x0 = null;
   let y0 = null;
-  el.addEventListener('touchstart', (ev) => { x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY; }, { passive: true });
-  el.addEventListener('touchend', (ev) => {
-    if (x0 === null) return;
-    const dx = ev.changedTouches[0].clientX - x0;
-    const dy = ev.changedTouches[0].clientY - y0;
-    x0 = null;
-    if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.5) trocarSemana(dx < 0 ? 1 : -1);
+  let dx = 0;
+  let lado = null; // 'x' quando o gesto e de lado; 'y' quando e rolagem
+  const gs = () => window.gsap ?? null;
+  const solto = () => { x0 = null; lado = null; };
+  el.addEventListener('touchstart', (ev) => {
+    x0 = ev.touches[0].clientX; y0 = ev.touches[0].clientY; dx = 0; lado = null;
+    gs()?.killTweensOf(el);
   }, { passive: true });
+  el.addEventListener('touchmove', (ev) => {
+    if (x0 === null) return;
+    dx = ev.touches[0].clientX - x0;
+    const dy = ev.touches[0].clientY - y0;
+    if (lado === null && Math.abs(dx) + Math.abs(dy) > 8) lado = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+    if (lado !== 'x') return;
+    // resistencia: anda menos que o dedo, como as listas do iPhone
+    el.style.transform = `translate3d(${dx * 0.6}px,0,0)`;
+    el.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / 400));
+  }, { passive: true });
+  const soltar = () => {
+    if (x0 === null) return;
+    const foi = lado === 'x' && Math.abs(dx) > 56;
+    const d = dx < 0 ? 1 : -1;
+    solto();
+    const g = gs();
+    if (foi) {
+      if (!g) { el.style.transform = ''; el.style.opacity = ''; trocarSemana(d); return; }
+      // A troca nao espera o fim da animacao (com a pagina em segundo plano ela quase nao anda).
+      g.to(el, { x: dx * 0.6 - d * 70, autoAlpha: 0, duration: 0.12, ease: 'power2.in' });
+      setTimeout(() => trocarSemana(d), 120);
+    } else if (el.style.transform) {
+      if (!g) { el.style.transform = ''; el.style.opacity = ''; return; }
+      g.to(el, { x: 0, autoAlpha: 1, duration: 0.25, ease: 'power3.out', clearProps: 'all' });
+    }
+  };
+  el.addEventListener('touchend', soltar, { passive: true });
+  el.addEventListener('touchcancel', soltar, { passive: true });
 }
 
 /** O treino que tem serie registrada numa data, ou null. Vale o da sessao (pode ser de outro dia do plano). */
@@ -1164,13 +1207,240 @@ function folha(titulo, corpo, { acao = null, aoFechar = null } = {}) {
   return d;
 }
 
+// ---------- evolucao por semana e trajetoria (11/11/2026) ----------
+// Pedido: "ao clicar no esta semana quero uma planilha de evolucao do treino ao longo de cada
+// semana" e "se for no historico a trajetoria do exercicio especifico". As contas sao puras
+// (planilhaSemanal, resumoDaSemana, trajetoriaDoExercicio em treino.js); aqui so a tela.
+// As colunas sao 3D (evolucao3d.js, carregado na hora); sem WebGL viram barras simples.
+
+const fmtVolume = (kg) => (kg >= 1000 ? `${numeroBr(kg / 1000)} t` : `${Math.round(kg)} kg`);
+const METRICAS = [
+  { id: 'volume', nome: 'Volume', fmt: fmtVolume },
+  { id: 'series', nome: 'Séries', fmt: (n) => String(n) },
+  { id: 'treinos', nome: 'Treinos', fmt: (n) => String(n) },
+];
+const diaMes = (d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`;
+const ICONE_DELTA = { sobe: 'subir', cai: 'descer', igual: 'igual' };
+const TEXTO_DELTA = { sobe: 'mais forte que a vez anterior', cai: 'mais fraca que a vez anterior', igual: 'igual à vez anterior' };
+
+function comparacaoDaSemana(rotulo, agora, antes, fmt) {
+  const tipo = agora > antes ? 'sobe' : agora < antes ? 'cai' : 'igual';
+  return h('div', { class: 'evo-numero', 'data-delta': tipo },
+    h('b', { texto: fmt(agora) }),
+    h('span', { class: 'evo-rotulo', texto: rotulo }),
+    h('span', { class: 'evo-delta' }, icone(ICONE_DELTA[tipo]), `${fmt(antes)} antes`));
+}
+
+function abrirEvolucao() {
+  const plano = planoTreino();
+  const sessoes = sessoesDoConfig(app.estado.config);
+  const dia = hoje();
+  const { semanas, linhas } = planilhaSemanal(plano, sessoes, dia, 8);
+  const resumo = resumoDaSemana(sessoes, dia);
+  const exPorId = new Map(plano.dias.flatMap((d) => d.exercicios.map((e) => [e.id, e])));
+  let metrica = 'volume';
+  let colunas = null;
+  let escolhida = null;
+  let fechada = false;
+
+  // ----- o topo: esta semana contra o mesmo trecho da passada -----
+  const ate = resumo.ateODia >= 6 ? 'a semana inteira' : `até ${NOMES_DOS_DIAS[(resumo.ateODia + 1) % 7].toLowerCase()}`;
+  const topo = h('section', { class: 'evo-topo', 'aria-label': 'Esta semana' },
+    h('p', { class: 'pequeno', texto: `Esta semana, ${ate}, contra o mesmo trecho da passada` }),
+    h('div', { class: 'evo-numeros' },
+      comparacaoDaSemana('treinos', resumo.agora.treinos, resumo.antes.treinos, String),
+      comparacaoDaSemana('séries', resumo.agora.series, resumo.antes.series, String),
+      comparacaoDaSemana('volume', resumo.agora.volume, resumo.antes.volume, fmtVolume)));
+
+  // ----- as colunas 3D, uma por semana -----
+  const palco = h('div', { class: 'evo-palco' });
+  const legendas = h('div', { class: 'evo-legendas', role: 'group', 'aria-label': 'Semanas' });
+  const chips = h('div', { class: 'evo-chips', role: 'group', 'aria-label': 'O que medir' });
+  const desenharChips = () => chips.replaceChildren(...METRICAS.map((m) => h('button', {
+    class: 'evo-chip', type: 'button', 'aria-pressed': String(m.id === metrica),
+    onclick: () => { if (m.id === metrica) return; metrica = m.id; desenharChips(); desenharLegendas(); colunas?.mudar(valores()); barrasSem3d(); },
+  }, m.nome)));
+  const valores = () => semanas.map((s) => s[metrica]);
+  const desenharLegendas = () => {
+    const m = METRICAS.find((x) => x.id === metrica);
+    legendas.replaceChildren(...semanas.map((s, i) => h('button', {
+      class: 'evo-legenda', type: 'button', 'aria-pressed': String(escolhida === i), 'data-atual': s.atual ? 'sim' : null,
+      'aria-label': `${s.atual ? 'Esta semana' : `Semana de ${s.rotulo}`}: ${m.fmt(s[metrica])} de ${m.nome.toLowerCase()}${s.recordes ? `, ${s.recordes} ${s.recordes === 1 ? 'recorde' : 'recordes'}` : ''}`,
+      onclick: () => escolherSemana(escolhida === i ? null : i),
+    },
+    h('b', { texto: s[metrica] > 0 ? m.fmt(s[metrica]) : '—' }),
+    h('span', { texto: s.atual ? 'Esta' : diaMes(s.inicio) }),
+    s.recordes ? h('i', { class: 'evo-rec', 'aria-hidden': 'true', texto: `★${s.recordes > 1 ? s.recordes : ''}` }) : null)));
+  };
+  // Sem WebGL: barras simples no mesmo lugar.
+  const barrasSem3d = () => {
+    if (palco.dataset.sem3d !== 'sim') return;
+    const max = Math.max(...valores(), 1);
+    palco.replaceChildren(...valores().map((v, i) => h('i', { class: 'evo-barra', 'data-atual': semanas[i].atual ? 'sim' : null, style: `height:${Math.max(3, (v / max) * 100)}%` })));
+  };
+
+  // ----- a planilha: melhor serie de cada exercicio em cada semana -----
+  const cabeca = h('div', { class: 'pl-linha pl-cabeca', role: 'row' },
+    h('span', { class: 'pl-nome', role: 'columnheader', texto: 'Exercício' }),
+    semanas.map((s, i) => h('span', { class: 'pl-celula', role: 'columnheader', 'data-col': String(i), 'data-atual': s.atual ? 'sim' : null, texto: s.atual ? 'Esta' : diaMes(s.inicio) })));
+  const corpo = [];
+  let grupo = null;
+  for (const l of linhas) {
+    if (l.treino !== grupo) {
+      grupo = l.treino;
+      corpo.push(h('div', { class: 'pl-grupo', role: 'row' }, h('span', { role: 'rowheader', texto: grupo })));
+    }
+    const temAlgo = l.celulas.some((c) => c !== null);
+    corpo.push(h('div', { class: 'pl-linha', role: 'row', 'data-vazia': temAlgo ? null : 'sim' },
+      h('button', { class: 'pl-nome', role: 'rowheader', type: 'button', 'aria-label': `${l.nome}: ver a trajetória`, onclick: () => abrirHistorico(exPorId.get(l.id)) }, h('span', { texto: l.nome }), icone('avancar')),
+      l.celulas.map((c, i) => (c === null
+        ? h('span', { class: 'pl-celula vazia', role: 'cell', 'data-col': String(i), 'aria-label': 'não treinou', texto: '—' })
+        : h('span', {
+          class: 'pl-celula', role: 'cell', 'data-col': String(i), 'data-delta': c.delta, 'data-recorde': c.recorde ? 'sim' : null,
+          'aria-label': `${cargaRepsTexto(c)}${c.recorde ? ', recorde' : c.delta ? `, ${TEXTO_DELTA[c.delta]}` : ', primeira vez'}`,
+        },
+        h('b', { texto: `${numeroBr(c.carga)}×${c.reps}` }),
+        c.recorde ? h('i', { class: 'pl-rec', 'aria-hidden': 'true', texto: '★' }) : c.delta ? h('i', { class: 'pl-seta', 'aria-hidden': 'true' }, icone(ICONE_DELTA[c.delta])) : null)))));
+  }
+  const tabela = h('div', { class: 'planilha', role: 'table', 'aria-label': 'Melhor série de cada exercício, por semana', style: `--colunas:${semanas.length}` }, cabeca, corpo);
+  const rolagem = h('div', { class: 'planilha-rolagem' }, tabela);
+
+  function escolherSemana(i) {
+    escolhida = i;
+    colunas?.destacar(i);
+    desenharLegendas();
+    tabela.dataset.escolhida = i === null ? '' : String(i);
+    for (const el of tabela.querySelectorAll('[data-col]')) el.toggleAttribute('data-escolhida', i !== null && el.dataset.col === String(i));
+    if (i !== null) {
+      const alvo = cabeca.querySelector(`[data-col="${i}"]`);
+      if (alvo) rolagem.scrollTo({ left: alvo.offsetLeft - rolagem.clientWidth / 2 + alvo.offsetWidth / 2, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    }
+  }
+
+  desenharChips();
+  desenharLegendas();
+  const vazio = !semanas.some((s) => s.treinos > 0);
+  const d = folha('Evolução por semana', [
+    topo,
+    h('section', { class: 'cartao evo-cartao', 'aria-label': 'Semana a semana' },
+      h('div', { class: 'evo-cabeca' }, h('h3', { class: 'secao-titulo', texto: 'Semana a semana' }), chips),
+      palco, legendas,
+      h('p', { class: 'discreto pequeno', texto: vazio ? 'Ainda sem treino registrado nestas 8 semanas.' : 'Toque numa semana para ver a coluna dela na planilha. ★ = semana com recorde.' })),
+    h('section', { class: 'cartao evo-cartao', 'aria-label': 'Planilha' },
+      h('h3', { class: 'secao-titulo', texto: 'Planilha' }),
+      h('p', { class: 'discreto pequeno', texto: 'A melhor série de cada exercício na semana (kg × reps), contra a vez anterior: ' },
+        h('span', { class: 'pl-leg', 'data-delta': 'sobe' }, icone('subir'), 'mais forte '),
+        h('span', { class: 'pl-leg', 'data-delta': 'igual' }, icone('igual'), 'igual '),
+        h('span', { class: 'pl-leg', 'data-delta': 'cai' }, icone('descer'), 'mais fraca '),
+        h('span', { class: 'pl-leg', 'data-recorde': 'sim' }, '★ recorde'), '. Toque no exercício para ver a trajetória.'),
+      rolagem),
+  ], { aoFechar: () => { fechada = true; colunas?.destruir(); colunas = null; } });
+  d.classList.add('folha-evolucao');
+
+  // Quatro semanas cabem certinho ao lado do nome; a de agora a vista (a planilha comeca no fim).
+  const nomeLargura = rolagem.clientWidth < 360 ? 112 : 128;
+  const coluna = Math.floor((rolagem.clientWidth - nomeLargura) / 4);
+  tabela.style.setProperty('--nome', `${nomeLargura}px`);
+  tabela.style.setProperty('--col', `${coluna}px`);
+  rolagem.style.setProperty('--nome-largura', `${nomeLargura}px`);
+  rolagem.scrollLeft = rolagem.scrollWidth;
+  movimento.evolucaoAbriu(d);
+  // As colunas 3D depois do primeiro quadro (a folha ja tem tamanho); falhou, barras simples.
+  requestAnimationFrame(() => {
+    import('./evolucao3d.js')
+      .then((m) => { if (!fechada) colunas = m.criarColunas(palco, valores(), semanas.length - 1); })
+      .catch(() => { palco.dataset.sem3d = 'sim'; barrasSem3d(); });
+  });
+}
+
+const cargaRepsTexto = (s) => `${numeroBr(s.carga)} quilos vezes ${s.reps}`;
+
+/** A trajetoria do exercicio: a forca estimada de cada treino, numa linha que se desenha. */
+function cartaoTrajetoria(ex, sessoes) {
+  const pontos = trajetoriaDoExercicio(ex, sessoes);
+  if (pontos.length === 0) return null;
+  const legenda = h('p', { class: 'traj-legenda', 'aria-live': 'polite' });
+  const descrever = (p) => `${dataCurta(p.dia)} · ${numeroBr(p.carga)} kg × ${Math.round(p.reps / Math.max(1, p.series))}${p.series > 1 ? ` (${p.series} séries)` : ''} · força ${numeroBr(p.forca)} kg${p.recorde ? ' · recorde' : p.subiuCarga ? ' · subiu a carga' : ''}`;
+  const analise = analiseDoExercicio(ex, sessoes, '9999-12-31');
+  const primeiro = pontos[0];
+  const ultimo = pontos.at(-1);
+  const mudou = ultimo.forca - primeiro.forca;
+  const resumo = pontos.length < 2
+    ? 'Um treino registrado: a linha começa no próximo.'
+    : analise.tendencia
+      ? `${analise.tendencia.direcao === 'sobe' ? 'Subindo' : analise.tendencia.direcao === 'cai' ? 'Caindo' : 'Estável'}: ${analise.tendencia.kgSemana > 0 ? '+' : ''}${numeroBr(analise.tendencia.kgSemana)} kg por semana na força estimada.`
+      : `De ${numeroBr(primeiro.forca)} para ${numeroBr(ultimo.forca)} kg (${mudou >= 0 ? '+' : ''}${numeroBr(mudou)}) em ${pontos.length} treinos.`;
+
+  // ----- o desenho (SVG; mesma escala de tempo: dia sem treino e espaco) -----
+  const W = 340;
+  const H = 170;
+  const M = { l: 36, r: 14, t: 16, b: 26 };
+  const ns = 'http://www.w3.org/2000/svg';
+  const s = (tag, attrs = {}) => { const el = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v)); return el; };
+  const t0 = Date.parse(primeiro.dia);
+  const t1 = Date.parse(ultimo.dia);
+  const vMin = Math.min(...pontos.map((p) => p.forca));
+  const vMax = Math.max(...pontos.map((p) => p.forca));
+  const folga = Math.max(1, (vMax - vMin) * 0.15);
+  const lo = vMin - folga;
+  const hi = vMax + folga;
+  const x = (p) => (pontos.length === 1 ? (W + M.l - M.r) / 2 : M.l + ((Date.parse(p.dia) - t0) / Math.max(1, t1 - t0)) * (W - M.l - M.r));
+  const y = (v) => M.t + (1 - (v - lo) / (hi - lo)) * (H - M.t - M.b);
+  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'traj-svg', role: 'img', 'aria-label': `Trajetória da força estimada de ${ex.nome}: ${resumo}` });
+  const idGrad = `traj-${Math.random().toString(36).slice(2, 8)}`;
+  const defs = s('defs');
+  const grad = s('linearGradient', { id: idGrad, x1: 0, y1: 0, x2: 0, y2: 1 });
+  grad.append(s('stop', { offset: '0%', 'stop-color': '#39e27a', 'stop-opacity': 0.32 }), s('stop', { offset: '100%', 'stop-color': '#39e27a', 'stop-opacity': 0 }));
+  defs.append(grad);
+  svg.append(defs);
+  for (const v of [lo + (hi - lo) * 0.15, (lo + hi) / 2, hi - (hi - lo) * 0.15]) {
+    svg.append(s('line', { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), class: 'traj-grade' }));
+    const rot = s('text', { x: M.l - 6, y: y(v) + 4, class: 'traj-eixo', 'text-anchor': 'end' });
+    rot.textContent = String(Math.round(v));
+    svg.append(rot);
+  }
+  for (const [p, ancora] of [[primeiro, 'start'], ...(pontos.length > 1 ? [[ultimo, 'end']] : [])]) {
+    const t = s('text', { x: x(p), y: H - 6, class: 'traj-eixo', 'text-anchor': ancora });
+    t.textContent = dataCurta(p.dia);
+    svg.append(t);
+  }
+  if (pontos.length > 1) {
+    const caminho = pontos.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p).toFixed(1)},${y(p.forca).toFixed(1)}`).join(' ');
+    svg.append(s('path', { d: `${caminho} L${x(ultimo).toFixed(1)},${H - M.b} L${x(primeiro).toFixed(1)},${H - M.b} Z`, fill: `url(#${idGrad})`, class: 'traj-area' }));
+    svg.append(s('path', { d: caminho, class: 'traj-linha', pathLength: 1 }));
+  }
+  const bolinhas = pontos.map((p, i) => {
+    const c = s('circle', { cx: x(p), cy: y(p.forca), r: p.recorde ? 6 : 4.5, class: 'traj-ponto', 'data-recorde': p.recorde ? 'sim' : 'nao', 'data-subiu': p.subiuCarga ? 'sim' : 'nao', tabindex: 0, role: 'button', 'aria-label': descrever(p) });
+    c.addEventListener('click', () => escolher(i));
+    c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); escolher(i); } });
+    svg.append(c);
+    return c;
+  });
+  function escolher(i) {
+    bolinhas.forEach((b, k) => b.classList.toggle('escolhido', k === i));
+    legenda.textContent = descrever(pontos[i]);
+  }
+  escolher(pontos.length - 1);
+
+  const cartao = h('div', { class: 'cartao traj' },
+    h('div', { class: 'traj-cabeca' }, h('p', { class: 'pequeno', texto: 'Trajetória · força estimada' }), h('b', { class: 'traj-numero', texto: `${numeroBr(ultimo.forca)} kg` })),
+    h('p', { class: 'traj-resumo', texto: resumo }),
+    svg,
+    legenda,
+    h('p', { class: 'discreto pequeno', texto: 'Força estimada = quanto você levantaria uma vez, pela melhor série do treino (fórmula de Epley). Ponto azul: subiu a carga. Ponto com anel: recorde.' }));
+  requestAnimationFrame(() => movimento.trajetoriaEntrou(svg));
+  return cartao;
+}
+
 function abrirHistorico(ex) {
-  const linhas = sessoesDoConfig(app.estado.config)
+  const todas = sessoesDoConfig(app.estado.config);
+  const linhas = todas
     .map((s) => ({ dia: s.dia, series: seriesDeTrabalho(s.exercicios[ex.id]) }))
     .filter((s) => s.series.length > 0)
     .slice(0, 15);
   const melhor = linhas.flatMap((l) => l.series).reduce((m, s) => (m === null || s.carga > m.carga || (s.carga === m.carga && s.reps > m.reps) ? s : m), null);
   folha(ex.nome, [
+    cartaoTrajetoria(ex, todas),
     melhor ? h('div', { class: 'cartao' }, h('p', { class: 'pequeno', texto: 'Melhor série' }), h('p', { class: 'ex-nome' }, cargaReps(melhor.carga, melhor.reps))) : null,
     linhas.length === 0
       ? h('p', { class: 'discreto', texto: ex.referencia ? `Ainda sem treino registrado aqui. Anotado: ${textoDasSeries(ex.referencia.reps.map((reps) => ({ carga: ex.referencia.carga, reps })))}` : 'Ainda sem treino registrado.' })

@@ -36,6 +36,7 @@ const CAMINHOS = {
   cardio: 'M3 12h4l2.2-5 4.2 10 2.4-5H21',
   liberada: 'M8 11V7.5a4 4 0 0 1 7.6-1.7M6 11h12v9H6ZM12 14.5v2',
   seguir: 'M5 12h14M13 6l6 6-6 6',
+  grafico: 'M4 20h16M7 16v-4M12 16V7M17 16v-7',
 };
 
 export function icone(nome) {

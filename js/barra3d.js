@@ -94,7 +94,9 @@ export function criarCena() {
   canvas.className = 'cena-3d';
   canvas.setAttribute('aria-hidden', 'true');
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' });
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  // No iPhone (tela de toque, densidade 3) 2x com antialias pesava em toda troca de dia, que
+  // anima a barra quadro a quadro: 1,5x tem 44% menos pixels e a diferenca nao aparece (11/11/2026).
+  renderer.setPixelRatio(Math.min(matchMedia('(pointer: coarse)').matches ? 1.5 : 2, window.devicePixelRatio || 1));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
 

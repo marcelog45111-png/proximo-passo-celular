@@ -924,3 +924,129 @@ export function ajusteEntreSeries(exercicio, serieFeita) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// A evolucao por semana (11/11/2026, pedido: "ao clicar no esta semana quero uma planilha de
+// evolucao do treino ao longo de cada semana" e "se for no historico a trajetoria do exercicio
+// especifico"). Semana = segunda a domingo. Em cada semana, cada exercicio vale pela MELHOR serie
+// de trabalho (forca estimada de Epley, a mesma da leitura da evolucao); aquecimento, minis e
+// drops ficam de fora. Comparacao com a ultima semana em que o exercicio foi feito:
+// sobe/cai so com mais de 1% de diferenca na forca (abaixo disso e igual). Recorde = passou a
+// melhor forca de todas as semanas anteriores em mais de 1%.
+
+const somarAoDia = (dia, n) => new Date(Date.UTC(...((p) => [p[0], p[1], p[2] + n])(partesDoDia(dia)))).toISOString().slice(0, 10);
+/** A segunda-feira da semana do dia (semana de segunda a domingo). */
+export const segundaDaSemana = (dia) => somarAoDia(dia, -((new Date(Date.UTC(...partesDoDia(dia))).getUTCDay() + 6) % 7));
+const MESES_CURTOS_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+/** "3–9 nov" ou "27 out–2 nov". */
+export function rotuloDeSemana(inicio) {
+  const fim = somarAoDia(inicio, 6);
+  const mes = (d) => MESES_CURTOS_PT[Number(d.slice(5, 7)) - 1];
+  const dia = (d) => Number(d.slice(8));
+  return mes(inicio) === mes(fim) ? `${dia(inicio)}–${dia(fim)} ${mes(fim)}` : `${dia(inicio)} ${mes(inicio)}–${dia(fim)} ${mes(fim)}`;
+}
+
+const melhorDaLista = (lista) => {
+  let melhor = null;
+  for (const s of feitas(lista).filter((x) => !x.t)) {
+    const f = forcaEstimada(s.carga, s.reps);
+    if (melhor === null || f > melhor.forca) melhor = { carga: s.carga, reps: s.reps, forca: arredondar(f) };
+  }
+  return melhor;
+};
+const comparar = (agora, antes) => (antes === null ? null : agora > antes * 1.01 ? 'sobe' : agora < antes * 0.99 ? 'cai' : 'igual');
+
+/**
+ * As ultimas `n` semanas (da mais velha a esta), com os numeros de cada uma e, por exercicio do
+ * plano, a melhor serie da semana. Exercicio de sessao que nao esta mais no plano fica de fora.
+ * { semanas: [{inicio, rotulo, atual, treinos, series, volume, recordes}],
+ *   linhas: [{id, nome, treino, celulas: [null | {carga, reps, forca, series, delta, recorde}]}] }
+ */
+export function planilhaSemanal(plano, sessoes, hoje, n = 6) {
+  const estaSemana = segundaDaSemana(hoje);
+  const inicios = Array.from({ length: n }, (_, i) => somarAoDia(estaSemana, -7 * (n - 1 - i)));
+  const primeira = inicios[0];
+  const exercicios = plano.dias.flatMap((d) => d.exercicios.map((e) => ({ ...e, treino: d.nome })));
+  const ids = new Set(exercicios.map((e) => e.id));
+  const semanas = inicios.map((inicio, i) => ({ inicio, rotulo: rotuloDeSemana(inicio), atual: i === n - 1, treinos: 0, series: 0, volume: 0, recordes: 0 }));
+  const porExercicio = new Map(exercicios.map((e) => [e.id, Array.from({ length: n }, () => null)]));
+  const melhorAntes = new Map(); // a melhor forca de cada exercicio antes da janela
+  const ultimaAntes = new Map(); // e a do ultimo treino dele antes da janela
+  for (const s of [...sessoes].sort((a, b) => (a.dia < b.dia ? -1 : 1))) {
+    if (s.dia > hoje) continue;
+    if (s.dia < primeira) {
+      for (const [id, lista] of Object.entries(s.exercicios)) {
+        const m = melhorDaLista(lista);
+        if (!m) continue;
+        if (m.forca > (melhorAntes.get(id) ?? 0)) melhorAntes.set(id, m.forca);
+        ultimaAntes.set(id, m.forca);
+      }
+      continue;
+    }
+    const i = inicios.indexOf(segundaDaSemana(s.dia));
+    if (i === -1) continue;
+    let treinou = false;
+    for (const [id, lista] of Object.entries(s.exercicios)) {
+      const trabalho = feitas(lista);
+      if (trabalho.length === 0) continue;
+      treinou = true;
+      semanas[i].series += trabalho.length;
+      semanas[i].volume += volume(trabalho);
+      if (!ids.has(id)) continue;
+      const m = melhorDaLista(lista);
+      if (!m) continue;
+      const celulas = porExercicio.get(id);
+      const antes = celulas[i];
+      celulas[i] = { ...(antes === null || m.forca > antes.forca ? m : antes), series: (antes?.series ?? 0) + trabalho.length };
+    }
+    if (treinou) semanas[i].treinos += 1;
+  }
+  const linhas = exercicios.map((e) => {
+    const celulas = porExercicio.get(e.id);
+    let ultima = ultimaAntes.get(e.id) ?? null;
+    let melhor = melhorAntes.get(e.id) ?? null;
+    const comDelta = celulas.map((c, i) => {
+      if (c === null) return null;
+      const delta = comparar(c.forca, ultima);
+      const recorde = melhor !== null && c.forca > melhor * 1.01;
+      if (recorde) semanas[i].recordes += 1;
+      ultima = c.forca;
+      melhor = Math.max(melhor ?? 0, c.forca);
+      return { ...c, delta, recorde };
+    });
+    return { id: e.id, nome: e.nome, treino: e.treino, celulas: comDelta };
+  });
+  for (const s of semanas) s.volume = Math.round(s.volume);
+  return { semanas, linhas };
+}
+
+/** Esta semana contra a passada, ate o mesmo dia (semana em andamento contra o mesmo trecho). */
+export function resumoDaSemana(sessoes, hoje) {
+  const inicio = segundaDaSemana(hoje);
+  const dias = diasEntre(inicio, hoje);
+  const passadaInicio = somarAoDia(inicio, -7);
+  const passadaAte = somarAoDia(passadaInicio, dias);
+  const conta = (de, ate) => {
+    const r = { treinos: 0, series: 0, volume: 0 };
+    for (const s of sessoes) {
+      if (s.dia < de || s.dia > ate) continue;
+      const trabalho = Object.values(s.exercicios).flatMap((l) => feitas(l));
+      if (trabalho.length === 0) continue;
+      r.treinos += 1;
+      r.series += trabalho.length;
+      r.volume += volume(trabalho);
+    }
+    r.volume = Math.round(r.volume);
+    return r;
+  };
+  return { agora: conta(inicio, hoje), antes: conta(passadaInicio, passadaAte), ateODia: dias };
+}
+
+/** A trajetoria do exercicio: cada treino (do mais velho ao mais novo) com forca, carga e reps. */
+export function trajetoriaDoExercicio(exercicio, sessoes) {
+  return historicoDoExercicio(exercicio, sessoes, '9999-12-31').map((p, i, todos) => ({
+    ...p,
+    subiuCarga: i > 0 && p.carga > todos[i - 1].carga,
+    recorde: i > 0 && p.forca > Math.max(...todos.slice(0, i).map((x) => x.forca)) * 1.01,
+  }));
+}

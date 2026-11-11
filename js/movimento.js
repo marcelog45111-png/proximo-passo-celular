@@ -279,3 +279,41 @@ export function semanaMudou(dias, direcao) {
   if (!pode() || !dias) return;
   g().from(dias.children, { x: 36 * direcao, autoAlpha: 0, duration: 0.38, stagger: { each: 0.03, from: direcao > 0 ? 'start' : 'end' }, ease: 'power3.out', clearProps: 'all' });
 }
+
+/**
+ * Trocou de dia ou de semana (11/11/2026, "ao passar pro lado dos dias, tem muito lag"): a entrada
+ * inteira da tela escondia todos os cartoes e criava um gatilho de rolagem para cada um, tudo no
+ * mesmo quadro em que a barra 3D trocava de treino. Aqui so o que esta na tela entra, rapido e sem
+ * ScrollTrigger; o que esta abaixo da dobra ja nasce no lugar.
+ */
+export function trocaLeve(tela, direcao = 0) {
+  if (!pode()) return;
+  const alto = window.innerHeight;
+  const visiveis = [...tela.querySelectorAll('.palco-data, .titulo-grande, .palco-numeros, .progresso, .placar, .cartao, .secao, .botao-rodape')]
+    .filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < alto; });
+  if (visiveis.length === 0) return;
+  noContexto(() => {
+    g().from(visiveis, { x: 18 * direcao, y: direcao === 0 ? 8 : 0, autoAlpha: 0, duration: 0.26, stagger: 0.025, ease: 'power2.out', clearProps: 'transform,opacity,visibility' });
+  });
+}
+
+/** A folha da evolucao: numeros e cartoes sobem, as linhas da planilha entram em fila. */
+export function evolucaoAbriu(folha) {
+  if (!pode()) return;
+  g().from(folha.querySelectorAll('.evo-numero, .evo-cartao'), { y: 16, autoAlpha: 0, duration: 0.45, stagger: 0.06, delay: 0.05, ease: 'power3.out', clearProps: 'all' });
+  // so as linhas que aparecem (a planilha pode ter dezenas): as de baixo ja nascem no lugar
+  const alto = window.innerHeight;
+  const linhas = [...folha.querySelectorAll('.pl-grupo, .pl-linha:not(.pl-cabeca)')].filter((el) => el.getBoundingClientRect().top < alto);
+  if (linhas.length > 0) g().from(linhas, { x: -10, autoAlpha: 0, duration: 0.32, stagger: 0.025, delay: 0.3, ease: 'power2.out', clearProps: 'all' });
+}
+
+/** A trajetoria do exercicio: a linha se desenha da esquerda para a direita, os pontos acendem. */
+export function trajetoriaEntrou(svg) {
+  if (!pode() || !svg) return;
+  const linha = svg.querySelector('.traj-linha');
+  const area = svg.querySelector('.traj-area');
+  const pontos = svg.querySelectorAll('.traj-ponto');
+  if (linha) g().fromTo(linha, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 1.1, ease: 'power2.inOut' });
+  if (area) g().from(area, { autoAlpha: 0, duration: 0.6, delay: 0.7, ease: 'power1.out' });
+  if (pontos.length > 0) g().from(pontos, { scale: 0, transformOrigin: '50% 50%', duration: 0.35, stagger: 0.9 / Math.max(1, pontos.length), ease: 'back.out(2)', clearProps: 'transform' });
+}
