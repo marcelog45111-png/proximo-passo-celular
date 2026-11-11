@@ -397,9 +397,19 @@ function telaTreino() {
   const sessao = sessaoDe(dia);
   const treino = treinoAnotado(app.diaTreino, sessao);
   const sessoes = sessoesDoConfig(app.estado.config);
+  // O cardio e do DIA escolhido (11/11/2026, "eu adiciono que fiz 20 min e ele coloca na semana
+  // inteira"): o cartao mostrava sempre o de hoje em qualquer dia da faixa. So hoje registra; dia que
+  // passou mostra o daquele dia so para ver; dia que vem nao tem cardio. No domingo a faixa ja e a
+  // semana que vem (hoje nao esta nela): o cartao de hoje fica, com o nome dizendo que e de hoje.
+  const cardioDeHoje = dataDoDia === dia || semanaHoje === 0;
+  const sessaoDoDia = dataDoDia === dia ? sessao : sessaoDe(dataDoDia);
+  const cartaoDoCardio = () => (cardioDeHoje
+    ? cartaoCardio(sessao, { deHoje: dataDoDia !== dia })
+    : dataDoDia < dia && sessaoDoDia.cardios.length > 0 ? cartaoCardio(sessaoDoDia, { soLeitura: true }) : null);
+  const cardioNaBarra = cardioDaBarra(cardioDeHoje ? sessao : dataDoDia < dia ? sessaoDoDia : { cardios: [] });
 
   if (treino === null) {
-    dadosDaBarra = { chave: `descanso-${app.diaTreino}`, placas: [], cardio: cardioDaBarra(sessao) };
+    dadosDaBarra = { chave: `descanso-${app.diaTreino}`, placas: [], cardio: cardioNaBarra };
     const tela = h('main', { class: 'tela' }, barraNav(`${NOMES_DOS_DIAS[app.diaTreino]}: descanso`, null, editarODia()), faixa,
       h('section', { class: 'palco', 'aria-label': 'Descanso' },
         h('p', { class: 'palco-data', texto: dataPorExtenso(dataDoDia) }),
@@ -407,7 +417,8 @@ function telaTreino() {
         h('div', { class: 'palco-cena' }),
         h('p', { class: 'palco-nota', texto: 'Barra vazia hoje. Não há treino montado para este dia.' })));
     tela.append(h('button', { class: 'botao cheio botao-rodape', style: 'margin-bottom:12px', onclick: () => abrirEditor(app.diaTreino), texto: `Montar treino de ${NOMES_DOS_DIAS[app.diaTreino].toLowerCase()}` }));
-    tela.append(cartaoCardio(sessao));
+    const cartao = cartaoDoCardio();
+    if (cartao) tela.append(cartao);
     return tela;
   }
 
@@ -419,7 +430,7 @@ function telaTreino() {
   const totalSeries = treino.exercicios.reduce((n, e) => n + roteiro(e, (sessao.exercicios[e.id] ?? []).length).filter((p) => p.t !== 'a').length, 0);
   const fracao = total > 0 ? completos / total : 0;
   const fechado = total > 0 && completos === total;
-  dadosDaBarra = dadosDaBarraDe(treino, sessao, dia);
+  dadosDaBarra = { ...dadosDaBarraDe(treino, sessao, dia), cardio: cardioNaBarra };
 
   // O placar do dia: cada exercicio fechado contra a ultima vez dele.
   const resultados = fechados.map((e) => resultadoDoExercicio(e, sessao.exercicios[e.id], ultimaVez(e, sessoes, dia))).filter((r) => r !== null);
@@ -455,7 +466,8 @@ function telaTreino() {
   const atual = treino.exercicios.find((e) => !completoNaSessao(e, sessao))?.id ?? null;
   treino.exercicios.forEach((ex, i) => tela.append(cartaoExercicio(ex, sessao, sessoes, dia, treino.id, i, ex.id === atual)));
 
-  tela.append(cartaoCardio(sessao));
+  const cartao = cartaoDoCardio();
+  if (cartao) tela.append(cartao);
   return tela;
 }
 
@@ -908,7 +920,7 @@ function fracaoDoCardio(sessao) {
 const cardioDaBarra = (sessao) => ({ f: fracaoDoCardio(sessao), meta: metaDoCardio() !== null });
 const numeroDoCampo = (t) => { const v = Number(String(t).replace(',', '.')); return String(t).trim() !== '' && Number.isFinite(v) && v > 0 ? v : null; };
 
-function cartaoCardio(sessao, { soLeitura = false } = {}) {
+function cartaoCardio(sessao, { soLeitura = false, deHoje = false } = {}) {
   const lista = sessao.cardios ?? [];
   const total = minutosDeCardio(sessao);
   const kcal = lista.reduce((n, c) => n + (c.kcal ?? 0), 0);
@@ -935,7 +947,7 @@ function cartaoCardio(sessao, { soLeitura = false } = {}) {
     h('div', { class: 'cardio-topo' },
       h('div', { class: 'cardio-anel', 'aria-hidden': 'true' }, svg, icone('cardio')),
       h('div', { class: 'cardio-titulo' },
-        h('p', { class: 'ex-nome', texto: 'Cardio' }),
+        h('p', { class: 'ex-nome', texto: deHoje ? 'Cardio de hoje' : 'Cardio' }),
         h('p', { class: 'ex-linha', texto: subtitulo })),
       total > 0
         ? h('div', { class: 'cardio-total', 'aria-label': `${n0(total)} minutos de cardio` }, minutos, h('small', { texto: 'min' }))
