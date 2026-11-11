@@ -5,7 +5,7 @@
 // por ate 10 minutos e o celular ficava na versao velha (11/11/2026). Agora sempre confere com o
 // servidor (ETag: se nada mudou, volta 304 sem baixar de novo).
 
-const CACHE = 'pp-celular-v19';
+const CACHE = 'pp-celular-v20';
 const ARQUIVOS = [
   './', 'index.html', 'estilo.css', 'manifest.webmanifest', 'icone.png',
   'js/app.js', 'js/cifra.js', 'js/nuvem.js', 'js/dados.js', 'js/treino.js', 'js/garry.js', 'js/gerado/nutricao.js', 'js/movimento.js', 'js/barra3d.js', 'js/evolucao3d.js', 'js/dom.js', 'js/jogo.js',

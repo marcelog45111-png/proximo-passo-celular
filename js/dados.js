@@ -110,6 +110,16 @@ export class Sincronizador {
   }
 
   /** Confere o codigo de recuperacao pelo verificador que o primeiro computador gravou. */
+  /**
+   * Conta nova, criada no iPhone: grava o verificador (o mesmo do computador, MotorSync.criarNuvem). Um
+   * computador que entrar depois nesta conta pede o codigo e confere por ele.
+   */
+  async criarNuvem() {
+    const { nuvem, cifra, estado } = this.d;
+    const item = { tabela: VERIFICADOR, chave: ['ok'], linha: { texto: 'proximo-passo' }, esquema: estado.esquema };
+    await nuvem.enviar([{ chave: await cifra.idOpaco(VERIFICADOR, JSON.stringify(['ok'])), dados: await cifra.cifrar(item), dispositivo: this.d.dispositivo }]);
+  }
+
   async codigoConfere() {
     const achado = await this.d.nuvem.buscar(await this.d.cifra.idOpaco(VERIFICADOR, JSON.stringify(['ok'])));
     if (achado === null) return false;

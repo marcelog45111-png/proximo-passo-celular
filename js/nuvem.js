@@ -66,6 +66,33 @@ export async function entrar(email, senha, { projeto = PROJETO, f = fetch, agora
   return sessaoDe(corpo, agora());
 }
 
+const MENSAGENS_DE_INSCRICAO = {
+  user_already_exists: 'Já existe uma conta com este e-mail. Toque em Entrar.',
+  email_exists: 'Já existe uma conta com este e-mail. Toque em Entrar.',
+  weak_password: 'Senha fraca: use pelo menos 6 caracteres.',
+  email_address_invalid: 'Esse e-mail não parece certo. Confira e tente de novo.',
+  validation_failed: 'Confira o e-mail e a senha.',
+  signup_disabled: 'As inscrições estão fechadas agora.',
+  over_request_rate_limit: 'Muitas tentativas seguidas. Espere um minuto e tente de novo.',
+  over_email_send_rate_limit: 'Muitas tentativas seguidas. Espere um minuto e tente de novo.',
+};
+
+/**
+ * Cria a conta (11/11/2026: "area de inscrever-se, como todos que vao usar o app nao tem o app do PC").
+ * Com o e-mail confirmado sozinho (o projeto esta assim), ja volta com a sessao. Se o projeto passar a
+ * pedir confirmacao, volta null: a pessoa confirma o e-mail e entra.
+ */
+export async function inscrever(email, senha, { projeto = PROJETO, f = fetch, agora = Date.now } = {}) {
+  const r = await chamar(f, `${projeto.url}/auth/v1/signup`, {
+    method: 'POST',
+    headers: { apikey: projeto.chavePublica, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: senha }),
+  });
+  const corpo = await lerJson(r);
+  if (!r.ok) throw new ErroNuvem('inscricao', MENSAGENS_DE_INSCRICAO[String(corpo.error_code ?? corpo.code ?? '')] ?? 'A nuvem não criou a conta agora. Tente de novo em instantes.');
+  return corpo.access_token ? sessaoDe(corpo, agora()) : null;
+}
+
 export class Nuvem {
   /** d: { projeto, sessao(): Sessao|null, guardarSessao(s), f?, agora? } */
   constructor(d) {

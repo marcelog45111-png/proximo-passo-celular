@@ -1,8 +1,8 @@
 // Proximo Passo no iPhone (04/11/2026): treino, dieta e o Garry, ligados ao
 // app do computador pela mesma nuvem cifrada. Primeira versao, experimental.
 
-import { criarCifra, deBase64, lerCodigoDeRecuperacao, paraBase64 } from './cifra.js';
-import { entrar, ErroNuvem, Nuvem, PROJETO } from './nuvem.js';
+import { codigoDeRecuperacao, criarCifra, deBase64, gerarSegredo, lerCodigoDeRecuperacao, paraBase64 } from './cifra.js';
+import { entrar, ErroNuvem, inscrever, Nuvem, PROJETO } from './nuvem.js';
 import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
 import {
   completoNaSessao, FAIXA_PADRAO, INTENSIDADES_DO_CARDIO, resumoDoCardio, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS, treinoComAquecimento, MUSCULOS, grupoDoExercicio, analiseDoExercicio, seriesDeTrabalho, ajusteEntreSeries,
@@ -68,6 +68,12 @@ const app = {
   abertos: new Set(), // exercicios fechados que a pessoa reabriu
   recolhidos: new Set(), // exercicios abertos que a pessoa recolheu tocando no nome (o da vez tambem)
   efeito: null, // o que acabou de mudar e merece animar depois do proximo desenho
+  // Entrada (11/11/2026, inscrever-se): 'criar' ou 'entrar'; e o passo depois do login sem chave no aparelho:
+  // null = ver a nuvem, 'codigo' = pedir o codigo, 'erro' = a nuvem falhou (app.erroConta).
+  modoEntrada: guardado.ler('sessao') ? 'entrar' : 'criar',
+  passoConta: null,
+  erroConta: '',
+  codigoNovo: null, // o codigo da conta que acabou de nascer neste iPhone: aparece uma vez
 };
 
 const salvarEstado = () => guardado.gravar('estado', app.estado);
@@ -144,36 +150,127 @@ async function ligar() {
 
 // ---------- entrar ----------
 
+/**
+ * Criar conta ou entrar (11/11/2026, "area de inscrever-se, como todos que vao usar o app nao tem o app do
+ * PC"). Quem cria a conta aqui ganha a chave dos dados neste iPhone e o codigo de recuperacao nos Ajustes.
+ * Quem ja tem conta (no computador ou noutro iPhone) entra e digita o codigo de la.
+ */
 function telaEntrar(erro = '') {
-  const email = h('input', { class: 'campo', type: 'email', autocomplete: 'username', inputmode: 'email', placeholder: 'seu@email.com', value: app.sessao?.email ?? '' });
-  const senha = h('input', { class: 'campo', type: 'password', autocomplete: 'current-password', placeholder: 'Senha' });
+  const criando = app.modoEntrada === 'criar';
+  const email = h('input', { class: 'campo', type: 'email', autocomplete: criando ? 'email' : 'username', inputmode: 'email', placeholder: 'seu@email.com', value: app.sessao?.email ?? '' });
+  const senha = h('input', { class: 'campo', type: 'password', autocomplete: criando ? 'new-password' : 'current-password', placeholder: criando ? 'Pelo menos 6 caracteres' : 'Senha' });
+  const repetir = criando ? h('input', { class: 'campo', type: 'password', autocomplete: 'new-password', placeholder: 'A mesma senha' }) : null;
   const msg = h('p', { class: 'erro', role: 'alert', texto: erro });
-  const botao = h('button', { class: 'botao principal cheio', type: 'submit', texto: 'Entrar' });
+  const rotulo = criando ? 'Criar conta' : 'Entrar';
+  const botao = h('button', { class: 'botao principal cheio', type: 'submit', texto: rotulo });
+  const trocar = (modo) => { if (app.modoEntrada === modo) return; app.modoEntrada = modo; desenhar(); };
   const form = h('form', {
     onsubmit: async (ev) => {
       ev.preventDefault();
-      botao.disabled = true;
-      botao.textContent = 'Entrando…';
       msg.textContent = '';
+      const e = email.value.trim();
+      if (!e.includes('@')) { msg.textContent = 'Digite o seu e-mail.'; email.focus(); return; }
+      if (criando && senha.value.length < 6) { msg.textContent = 'A senha precisa de pelo menos 6 caracteres.'; senha.focus(); return; }
+      if (criando && senha.value !== repetir.value) { msg.textContent = 'As duas senhas não são iguais.'; repetir.focus(); return; }
+      botao.disabled = true;
+      botao.textContent = criando ? 'Criando…' : 'Entrando…';
       try {
-        app.sessao = await entrar(email.value.trim(), senha.value, { projeto: projetoEmUso() });
+        if (criando) {
+          const sessao = await inscrever(e, senha.value, { projeto: projetoEmUso() });
+          if (sessao === null) {
+            app.modoEntrada = 'entrar';
+            desenhar();
+            raiz.querySelector('.erro').textContent = 'Conta criada. Abra o e-mail de confirmação e depois entre aqui.';
+            return;
+          }
+          app.sessao = sessao;
+        } else {
+          app.sessao = await entrar(e, senha.value, { projeto: projetoEmUso() });
+        }
         guardado.gravar('sessao', app.sessao);
+        app.passoConta = null;
         desenhar();
-      } catch (e) {
-        msg.textContent = e.message;
+      } catch (falha) {
+        msg.textContent = falha.message;
         botao.disabled = false;
-        botao.textContent = 'Entrar';
+        botao.textContent = rotulo;
       }
     },
   },
-  h('label', { class: 'rotulo', texto: 'E-mail da sincronização' }), email,
+  h('label', { class: 'rotulo', texto: 'E-mail' }), email,
   h('label', { class: 'rotulo', texto: 'Senha' }), senha,
+  criando ? h('label', { class: 'rotulo', texto: 'Repita a senha' }) : null, repetir,
   msg, h('div', { style: 'height:16px' }), botao);
   return h('main', { class: 'entrada' },
     h('img', { class: 'marca', src: 'icone.png', alt: '' }),
     h('h1', { texto: 'Próximo Passo' }),
-    h('p', { class: 'discreto', texto: 'Entre com a mesma conta da sincronização do app do computador.' }),
+    h('div', { class: 'entrada-modos', role: 'group', 'aria-label': 'Criar conta ou entrar' },
+      h('button', { type: 'button', class: 'entrada-modo', 'aria-pressed': String(criando), onclick: () => trocar('criar') }, 'Criar conta'),
+      h('button', { type: 'button', class: 'entrada-modo', 'aria-pressed': String(!criando), onclick: () => trocar('entrar') }, 'Já tenho conta')),
+    h('p', { class: 'discreto', texto: criando
+      ? 'Treino e dieta no seu iPhone. Seus dados vão cifrados: só abrem com o código que fica nos Ajustes deste aparelho.'
+      : 'Entre com a conta que você criou aqui ou no app do computador.' }),
     form);
+}
+
+/** Logo depois do login: conta nova (nuvem vazia) nasce aqui; conta com dados pede o codigo. */
+let preparando = null;
+function prepararConta() {
+  if (preparando) return;
+  preparando = (async () => {
+    // Conta ligando agora (sem chave neste aparelho): os dados daqui comecam do zero. Sobra de outra conta
+    // (outra pessoa no mesmo iPhone) nunca pode entrar nem subir cifrada com a chave nova.
+    app.estado = estadoVazio();
+    app.conversa = [];
+    salvarEstado();
+    guardado.gravar('conversa', null);
+    // Aparelho novo para a nuvem: o recebimento pula as linhas do proprio aparelho, e quem saiu e entrou de
+    // novo neste iPhone nunca mais via o que gravou daqui (11/11/2026).
+    dispositivo = `iphone-${novoId()}`;
+    guardado.gravar('dispositivo', dispositivo);
+    const nuvem = new Nuvem({ projeto: projetoEmUso(), sessao: () => app.sessao, guardarSessao: (sessao) => { app.sessao = sessao; guardado.gravar('sessao', sessao); } });
+    const temDados = (await nuvem.receber(0, 1)).length > 0;
+    if (temDados) { app.passoConta = 'codigo'; return; }
+    const segredo = gerarSegredo();
+    guardado.gravar('segredo', paraBase64(segredo));
+    await ligar();
+    await app.sinc.criarNuvem();
+    app.codigoNovo = codigoDeRecuperacao(segredo);
+  })().catch((e) => {
+    if (e instanceof ErroNuvem && e.tipo === 'login') { sair(); return; }
+    guardado.gravar('segredo', null);
+    app.sinc = null;
+    app.passoConta = 'erro';
+    app.erroConta = e instanceof ErroNuvem ? e.message : 'Não consegui preparar a conta agora.';
+  }).finally(() => { preparando = null; desenhar(); });
+}
+
+function telaPreparando() {
+  const erro = app.passoConta === 'erro';
+  return h('main', { class: 'entrada' },
+    h('img', { class: 'marca', src: 'icone.png', alt: '' }),
+    h('h1', { texto: erro ? 'Não deu agora' : 'Preparando sua conta' }),
+    h('p', { class: 'discreto', texto: erro ? app.erroConta : 'Conferindo a nuvem…' }),
+    erro ? h('button', { class: 'botao principal cheio', onclick: () => { app.passoConta = null; desenhar(); }, texto: 'Tentar de novo' }) : null,
+    h('button', { class: 'botao texto', style: 'margin:16px auto 0', onclick: sair, texto: 'Usar outra conta' }));
+}
+
+/** O codigo de recuperacao numa folha: ao criar a conta (uma vez) e pelos Ajustes. */
+function mostrarCodigo(codigo, { novo = false } = {}) {
+  const aviso = h('p', { class: 'pequeno', role: 'status' });
+  folha(novo ? 'Sua conta está pronta' : 'Código de recuperação', [
+    h('p', { class: 'codigo-explica', texto: novo
+      ? 'Este é o seu código de recuperação. Ele abre os seus dados em outro aparelho (outro iPhone ou o app do computador). Guarde num lugar seguro: sem ele, os dados não abrem em outro lugar.'
+      : 'Digite este código quando entrar com esta conta em outro aparelho (outro iPhone ou o app do computador). Não mostre para ninguém: ele abre os seus dados.' }),
+    h('p', { class: 'codigo-caixa', 'aria-label': `Código: ${codigo.split('-').join(' ')}` }, ...codigo.split('-').map((g) => h('span', { texto: g }))),
+    h('button', {
+      class: 'botao principal cheio', onclick: async () => {
+        try { await navigator.clipboard.writeText(codigo); aviso.textContent = 'Copiado.'; } catch { aviso.textContent = 'Não deu para copiar: anote à mão.'; }
+      }, texto: 'Copiar o código',
+    }),
+    aviso,
+    h('p', { class: 'pequeno', texto: 'Ele fica sempre em Ajustes > Código de recuperação.' }),
+  ]);
 }
 
 function telaCodigo(erro = '') {
@@ -183,7 +280,7 @@ function telaCodigo(erro = '') {
   return h('main', { class: 'entrada' },
     h('img', { class: 'marca', src: 'icone.png', alt: '' }),
     h('h1', { texto: 'Código de recuperação' }),
-    h('p', { class: 'discreto', texto: 'É o código de 13 grupos que o app do computador mostrou ao ligar a sincronização (Ajustes > Sincronização). Ele abre os seus dados: fica só neste iPhone.' }),
+    h('p', { class: 'discreto', texto: 'Esta conta já tem dados. Digite o código de 13 grupos: está em Ajustes > Código de recuperação no aparelho onde a conta foi criada (no app do computador, em Ajustes > Sincronização). Ele fica só neste iPhone.' }),
     h('form', {
       onsubmit: async (ev) => {
         ev.preventDefault();
@@ -194,7 +291,7 @@ function telaCodigo(erro = '') {
         guardado.gravar('segredo', paraBase64(segredo));
         try {
           await ligar();
-          if (!(await app.sinc.codigoConfere())) throw new Error('O código não abre os dados desta conta. Confira no computador.');
+          if (!(await app.sinc.codigoConfere())) throw new Error('O código não abre os dados desta conta. Confira no outro aparelho.');
           desenhar();
         } catch (e) {
           guardado.gravar('segredo', null);
@@ -274,7 +371,13 @@ function desenhar() {
   movimento.novoDesenho();
   raiz.replaceChildren();
   if (app.sessao === null) { assinaturaDaTela = 'entrar'; raiz.append(telaEntrar()); movimento.telaDeEntrada(raiz.firstElementChild); return; }
-  if (app.sinc === null) { assinaturaDaTela = 'codigo'; raiz.append(telaCodigo()); movimento.telaDeEntrada(raiz.firstElementChild); return; }
+  if (app.sinc === null) {
+    assinaturaDaTela = 'conta';
+    raiz.append(app.passoConta === 'codigo' ? telaCodigo() : telaPreparando());
+    movimento.telaDeEntrada(raiz.firstElementChild);
+    if (app.passoConta === null) prepararConta();
+    return;
+  }
   if (app.estado.cursor === 0) {
     assinaturaDaTela = 'baixando';
     raiz.append(telaBaixando());
@@ -298,6 +401,11 @@ function desenhar() {
   if (direcaoDaSemana !== 0) { movimento.semanaMudou(tela.querySelector('.dias'), direcaoDaSemana); direcaoDaSemana = 0; }
   if (soODia) movimento.trocaLeve(tela, direcao);
   else if (entrou && app.aba !== 'garry') movimento.entrada(tela);
+  if (app.codigoNovo) {
+    const codigo = app.codigoNovo;
+    app.codigoNovo = null;
+    mostrarCodigo(codigo, { novo: true });
+  }
 }
 
 function depoisDeMontar(tela, entrou) {
@@ -362,8 +470,8 @@ function telaTreino() {
   if (plano.dias.length === 0) {
     const vazia = h('main', { class: 'tela' }, cabeca('Treino', dataPorExtenso(dia)));
     vazia.append(h('div', { class: 'cartao' },
-      h('p', { texto: 'Seu treino ainda não chegou do computador.' }),
-      h('p', { class: 'discreto', texto: 'Ele vem pela sincronização. Se não aparecer em alguns minutos, monte aqui.' }),
+      h('p', { texto: 'Ainda não há treino aqui.' }),
+      h('p', { class: 'discreto', texto: 'Monte o seu: os dias da semana e os exercícios de cada um. Se você usa o app do computador, o treino de lá chega sozinho.' }),
       h('button', { class: 'botao principal cheio', style: 'margin-top:10px', onclick: () => abrirEditor(semanaHoje), texto: 'Montar treino' })));
     return vazia;
   }
@@ -1814,7 +1922,7 @@ function abrirAjustes() {
   const pend = Object.keys(app.estado.pendentes).length;
   const situacao = app.sync.estado === 'erro'
     ? app.sync.mensagem
-    : pend > 0 ? `${pend} mudança(s) esperando para subir.` : 'Tudo sincronizado com o computador.';
+    : pend > 0 ? `${pend} mudança(s) esperando para subir.` : 'Tudo sincronizado.';
   const linhaSit = h('p', { class: 'discreto', texto: situacao });
   folha('Ajustes', [
     h('div', { class: 'cartao' },
@@ -1826,10 +1934,20 @@ function abrirAjustes() {
           ev.currentTarget.disabled = true;
           linhaSit.textContent = 'Sincronizando…';
           await sincronizar();
-          linhaSit.textContent = app.sync.estado === 'erro' ? app.sync.mensagem : 'Tudo sincronizado com o computador.';
+          linhaSit.textContent = app.sync.estado === 'erro' ? app.sync.mensagem : 'Tudo sincronizado.';
           ev.currentTarget.disabled = false;
         }, texto: 'Sincronizar agora',
       })),
+    h('div', { class: 'cartao' },
+      h('p', { class: 'pequeno', texto: 'Código de recuperação' }),
+      h('p', { class: 'discreto', texto: 'Abre os seus dados em outro aparelho. Não mostre para ninguém.' }),
+      h('button', {
+        class: 'botao cheio', style: 'margin-top:10px', onclick: () => {
+          const segredo = guardado.ler('segredo');
+          if (segredo) mostrarCodigo(codigoDeRecuperacao(deBase64(segredo)));
+        }, texto: 'Mostrar o código',
+      })),
+    cartaoChaveDoGarry(),
     h('div', { class: 'cartao' },
       h('p', { class: 'pequeno', texto: 'Para usar como app: no Safari, Compartilhar → Adicionar à Tela de Início.' }),
       h('button', { class: 'botao texto perigo', style: 'margin-top:8px', onclick: sair, texto: 'Sair da conta neste iPhone' })),
@@ -1837,9 +1955,46 @@ function abrirAjustes() {
   ]);
 }
 
+/**
+ * A chave da IA do Garry (11/11/2026): sem o app do computador, ela e salva daqui. Vai cifrada na conta, no
+ * mesmo lugar que o computador usa (iaChave:<host>), e o modelo gratis do OpenRouter vira o padrao.
+ */
+const MODELO_GRATIS = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+function cartaoChaveDoGarry() {
+  const ia = configDaIa(app.estado.config);
+  const temChave = ia?.cifrada != null;
+  const campo = h('input', { class: 'campo', type: 'password', autocomplete: 'off', placeholder: 'sk-or-…', 'aria-label': 'Chave da IA' });
+  const msg = h('p', { class: 'pequeno', role: 'status' });
+  return h('div', { class: 'cartao' },
+    h('p', { class: 'pequeno', texto: 'Garry (IA)' }),
+    h('p', { class: 'discreto', texto: temChave
+      ? `Chave salva na conta (${ia.host}). Para trocar, cole outra.`
+      : 'Para conversar com o Garry, crie uma chave grátis em openrouter.ai/keys e cole aqui.' }),
+    h('div', { style: 'height:8px' }), campo,
+    h('button', {
+      class: 'botao cheio', style: 'margin-top:10px', onclick: async () => {
+        const chave = campo.value.trim();
+        if (chave.length < 10) { msg.textContent = 'Cole a chave inteira.'; return; }
+        const cfg = configDaIa(app.estado.config);
+        if (!cfg || !app.cifra) { msg.textContent = 'Entre na conta antes.'; return; }
+        const cifrada = await app.cifra.cifrar({ chave });
+        mudar((e) => {
+          definirConfig(e, `iaChave:${cfg.host}`, cifrada);
+          if (!cfg.modelo) definirConfig(e, `iaModelo:${cfg.host}`, MODELO_GRATIS);
+        });
+        campo.value = '';
+        msg.textContent = 'Chave salva na conta.';
+      }, texto: temChave ? 'Trocar a chave' : 'Salvar a chave',
+    }),
+    msg);
+}
+
 function sair() {
   for (const nome of ['sessao', 'segredo', 'estado', 'conversa', 'ultima-sync']) guardado.gravar(nome, null);
   app.sessao = null;
+  app.passoConta = null;
+  app.codigoNovo = null;
+  app.modoEntrada = 'entrar';
   app.sinc = null;
   app.cifra = null;
   app.estado = estadoVazio();
@@ -1919,6 +2074,12 @@ function telaDieta() {
       macro('g', 'Gordura', resumo.consumido.gordura, resumo.alvo.gordura, 'var(--laranja)'))));
 
   tela.append(h('h2', { class: 'secao', texto: 'Refeições do plano' }));
+  // Conta nova, sem o app do computador (11/11/2026): o plano da dieta ainda nao se monta pelo iPhone.
+  if (resumo.refeicoes.length === 0) {
+    tela.append(h('section', { class: 'cartao' },
+      h('p', { texto: 'Ainda não há plano de dieta aqui.' }),
+      h('p', { class: 'discreto', texto: 'Por enquanto o plano é montado no app do computador e chega sozinho. O peso, aqui embaixo, já funciona.' })));
+  }
   for (const r of resumo.refeicoes) {
     const aberta = refeicaoAberta.has(r.habitoId) || r.proxima;
     const estado = r.feita ? h('span', { class: 'ref-estado feita' }, icone('check'), 'Feita')
@@ -2060,7 +2221,7 @@ async function perguntar(texto) {
     const ia = configDaIa(app.estado.config);
     if (ia === null || ia.modelo === '') throw new Error('A IA ainda não está configurada no app do computador (Garry > ⚙).');
     const chave = ia.cifrada ? await abrirChave(ia.cifrada, app.cifra) : null;
-    if (chave === null) throw new Error(`A chave da IA (${ia.host}) não está salva na conta. No computador, salve a chave com a sincronização ligada.`);
+    if (chave === null) throw new Error(`A chave da IA (${ia.host}) não está salva na conta. Salve em Ajustes > Garry (IA).`);
     const final = await conversar({ ...ia, chave }, app.conversa, contextoDoGarry(), (parcial) => {
       balao.classList.remove('pensando');
       balao.textContent = parcial;

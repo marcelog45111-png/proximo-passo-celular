@@ -1077,3 +1077,11 @@ div.cardio-item { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
 /* o nome do exercicio recolhe o cartao (11/11/2026) */
 .ex-nome-botao { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin: -6px 0; padding: 0; text-align: left; font: inherit; color: inherit; }
 .ex-nome-botao svg { width: 14px; height: 14px; flex: none; align-self: center; color: var(--texto-3); }
+
+/* criar conta / entrar (11/11/2026) */
+.entrada-modos { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 10px 0 14px; border-radius: 999px; background: var(--cartao-2); }
+.entrada-modo { min-height: 44px; border-radius: 999px; font-size: 0.92rem; font-weight: 600; color: var(--texto-2); }
+.entrada-modo[aria-pressed="true"] { background: var(--cartao-3); color: var(--texto); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35); }
+.codigo-explica { margin: 0 0 14px; font-size: 0.92rem; line-height: 1.4; color: var(--texto); }
+.codigo-caixa { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; padding: 14px; border-radius: 16px; background: var(--cartao-2); font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 1.02rem; font-weight: 600; letter-spacing: 0.06em; text-align: center; user-select: all; -webkit-user-select: all; }
+.codigo-caixa span { padding: 4px 0; border-radius: 8px; background: var(--cartao); }

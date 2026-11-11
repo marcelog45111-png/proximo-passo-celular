@@ -11,6 +11,29 @@ const TAMANHO_SEGREDO = 32;
 const TAMANHO_CODIGO = Math.ceil((TAMANHO_SEGREDO * 8) / 5);
 const texto = new TextEncoder();
 
+/** 32 bytes sorteados: a chave de uma conta criada no iPhone (11/11/2026, sem o app do computador). */
+export function gerarSegredo() {
+  return crypto.getRandomValues(new Uint8Array(TAMANHO_SEGREDO));
+}
+
+/** Os 32 bytes no codigo de recuperacao (13 grupos de 4), igual ao do computador (src/main/sync/cifra.ts). */
+export function codigoDeRecuperacao(segredo) {
+  let bits = 0;
+  let acumulado = 0;
+  let saida = '';
+  for (const byte of segredo) {
+    acumulado = (acumulado << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      saida += ALFABETO[(acumulado >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    acumulado &= (1 << bits) - 1;
+  }
+  if (bits > 0) saida += ALFABETO[(acumulado << (5 - bits)) & 31];
+  return saida.match(/.{1,4}/g).join('-');
+}
+
 /** O codigo de recuperacao (13 grupos de 4) virando os 32 bytes; null se nao for um codigo. */
 export function lerCodigoDeRecuperacao(digitado) {
   const limpo = String(digitado).toUpperCase().replace(/[\s-]/g, '');
