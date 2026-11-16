@@ -157,7 +157,8 @@ export function abrirJogo(partida, aoFechar) {
     // vale tambem depois de fechar e abrir a tela.
     const anteriorFeita = (() => { for (let k = i - 1; k >= 0; k -= 1) if (lista[k]?.reps > 0 && !lista[k].t && !pl.passos[k]?.t) return lista[k]; return null; })();
     const ajuste = ja || passo.t ? null : o.ajuste?.(anteriorFeita) ?? null;
-    const cargaDeHoje = passo.t === 'd' || aquecendo ? null : ajuste?.carga ?? [...lista].reverse().find((s) => s.reps > 0 && !s.t)?.carga ?? null;
+    // Na piramide cada degrau tem a sua carga: a da serie anterior nao vale para a seguinte.
+    const cargaDeHoje = passo.t === 'd' || aquecendo || o.ex.metodo === 'piramide' ? null : ajuste?.carga ?? [...lista].reverse().find((s) => s.reps > 0 && !s.t)?.carga ?? null;
     // Com a carga corrigida no meio do exercicio, a meta acompanha: a carga nova, no comeco da faixa.
     const alvo = ajuste ? { carga: ajuste.carga, reps: pl.faixa.min } : passo.alvo;
     const dicaDoPasso = ajuste ? `Carga ajustada hoje: qualquer número de ${pl.faixa.min} a ${pl.faixa.max} reps vale.` : passo.dica;
@@ -355,6 +356,7 @@ export function abrirJogo(partida, aoFechar) {
         valor.seg > 0 ? h('p', { class: 'jogo-durou' }, 'Série em ', h('b', { texto: relogio(valor.seg) }), passo.base?.seg ? ` · anterior ${relogio(passo.base.seg)}` : '') : null,
         numero('carga', 'kg', campoCarga, 'carga', 'um quilo'),
         numero('reps', 'reps', campoReps, 'reps', 'uma repetição'),
+        o.ex.metodo === 'iso' && !aquecendo ? h('p', { class: 'jogo-como', texto: 'Anote só as reps diretas, as que vieram depois das 5 segurando.' }) : null,
         aoVivo,
         h('button', { class: 'botao principal cheio jogo-feito', onclick: feito }, icone('check'), ja ? 'Salvar' : 'Feito'),
         acoes);
@@ -375,7 +377,7 @@ export function abrirJogo(partida, aoFechar) {
         ? `Hoje ${kg(valor.carga)}; no treino anterior, ${kg(passo.base.carga)}.`
         : `Hoje ${valor.reps}; no treino anterior, ${passo.base.reps}.`;
     }
-    if (!passo.t && valor.reps >= faixa.max && v.tipo !== 'abaixo') sub += ` Teto de ${faixa.max} batido.`;
+    if (!passo.t && o.ex.metodo !== 'piramide' && valor.reps >= faixa.max && v.tipo !== 'abaixo') sub += ` Teto de ${faixa.max} batido.`;
     const subiu = v.tipo === 'reps' || v.tipo === 'carga';
     carimbo.dataset.tipo = v.tipo;
     carimbo.replaceChildren(h('b', {}, subiu ? icone('subir') : null, titulo), h('span', { texto: sub }));

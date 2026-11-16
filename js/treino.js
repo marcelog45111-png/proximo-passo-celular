@@ -22,7 +22,16 @@ export const METODOS = {
   myo: { nome: 'Myo-reps', resumo: 'Uma série de ativação e mini-séries curtas, com 20 s entre elas.', rotulo: 'Mini-séries', series: 4, descansoS: 20, faixa: { min: 12, max: 20 } },
   drop: { nome: 'Drop set', resumo: 'Depois da última série, baixa a carga e continua sem descanso.', rotulo: 'Séries', drops: 2 },
   restpause: { nome: 'Rest-pause', resumo: 'Uma série principal e pausas de 20 s com a mesma carga.', rotulo: 'Pausas', series: 2, descansoS: 20 },
+  // Os tres do Jorlan (16/11/2026, docs/treino/metodo-jorlan.md). Cada serie continua sendo UMA linha
+  // (carga e reps): no iso as reps anotadas sao as diretas; no alternado + simultaneo, o total; na
+  // piramide cada degrau tem a sua carga e a sua meta, e cada degrau sobe sozinho.
+  iso: { nome: 'Isometria + direta', resumo: '5 reps segurando 3 s no pico e, sem soltar a carga, as reps direto. Conta como uma série; anote as diretas.', rotulo: 'Séries', series: 3, faixa: { min: 8, max: 10 }, isoReps: 5, isoS: 3 },
+  altsim: { nome: 'Alternado + simultâneo', resumo: 'Metade das reps alternando os braços (cada lado conta 1) e a outra metade com os dois juntos, sem parar.', rotulo: 'Séries', series: 4, faixa: { min: 12, max: 16 } },
+  piramide: { nome: 'Pirâmide', resumo: '15, 12, 10 e 8 reps, subindo a carga a cada série. Cada degrau tem a sua carga e sobe sozinho.', rotulo: 'Séries', series: 4, faixa: { min: 8, max: 15 } },
 };
+
+/** A meta de cada degrau da piramide: 15, 12, 10, 8 e, se houver mais, 6. */
+export const alvoDaPiramide = (k) => [15, 12, 10, 8][k] ?? 6;
 
 const numero = (v, padrao = null) => (typeof v === 'number' && Number.isFinite(v) ? v : padrao);
 // t: 'm' = mini-serie ou pausa (mesma carga), 'd' = drop, 'a' = aquecimento (nunca conta na evolucao).
@@ -65,6 +74,9 @@ function lerExercicio(e) {
     // A referencia anotada (o que a pessoa fazia antes do app). `cargas` (11/11/2026, importar com IA):
     // uma carga por serie quando elas mudam ("40/35/30"); sem ela, `carga` vale para todas.
     referencia: e.referencia && typeof e.referencia === 'object' ? referenciaDe(e.referencia) : null,
+    // Desde quando o exercicio e feito deste jeito (16/11/2026): trocou o metodo ou a faixa, as series
+    // de antes nao servem de treino anterior (eram outra coisa). null = vale tudo.
+    desde: typeof e.desde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.desde) ? e.desde : null,
   };
 }
 
@@ -170,7 +182,7 @@ export const seriesDeTrabalho = feitas;
 /** A ultima vez que o exercicio foi feito antes do dia, ou a referencia anotada no plano. */
 export function ultimaVez(exercicio, sessoes, antesDe) {
   for (const s of sessoes) {
-    if (s.dia >= antesDe) continue;
+    if (s.dia >= antesDe || (exercicio.desde && s.dia < exercicio.desde)) continue;
     const series = feitas(s.exercicios[exercicio.id]);
     if (series.length > 0) return { dia: s.dia, series };
   }
@@ -265,7 +277,11 @@ export function progressao(exercicio, series) {
   const minis = validas.filter((s) => s.t === 'm');
   let faltam = 0;
   let completo;
-  if (exercicio.metodo === 'myo' || exercicio.metodo === 'restpause') {
+  if (exercicio.metodo === 'piramide') {
+    // Cada degrau contra a meta dele, na ordem (15, 12, 10, 8), com a carga que tiver.
+    for (let i = 0; i < exercicio.series; i += 1) faltam += Math.max(0, alvoDaPiramide(i) - (semTipo[i]?.reps ?? 0));
+    completo = semTipo.length >= exercicio.series;
+  } else if (exercicio.metodo === 'myo' || exercicio.metodo === 'restpause') {
     faltam = Math.max(0, faixa.max - trabalho[0].reps);
     if (exercicio.metodo === 'myo') {
       const alvo = alvoDaMini(faixa);
@@ -292,6 +308,8 @@ export function regraDaCarga(exercicio) {
   if (exercicio.metodo === 'myo') return `${faixa.max} na ativação e ${n} ${plural(n, 'mini', 'minis')} de ${alvoDaMini(faixa)}`;
   if (exercicio.metodo === 'restpause') return `${faixa.max} na série principal, com as pausas feitas`;
   if (exercicio.metodo === 'drop') return `${faixa.max} em todas as ${n} séries (os drops não contam)`;
+  if (exercicio.metodo === 'piramide') return 'as reps de cada degrau (15, 12, 10, 8): cada degrau sobe a carga sozinho';
+  if (exercicio.metodo === 'iso') return `${faixa.max} diretas em todas as ${n} séries, depois das ${METODOS.iso.isoReps} segurando`;
   return n === 1 ? `${faixa.max} na série` : `${faixa.max} em todas as ${n} séries`;
 }
 
@@ -314,6 +332,7 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
   const cargaDeHoje = cargaDeTrabalhoDeHoje(exercicio, ultima);
   const vez = { w: 0, m: 0, d: 0 };
   let cargaDoDrop = cargaDeHoje;
+  let cargaDoDegrau = cargaDeHoje;
   let alvoPrincipal = faixa.min;
 
   let iAquecimento = 0;
@@ -327,8 +346,10 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
       const base = anteriores.d[vez.d] ?? null;
       vez.d += 1;
       // Mesma carga de trabalho da ultima vez: repete os drops de la. Senao, 20% a menos a cada um.
-      cargaDoDrop = base && tipo === 'bater' ? base.carga : Math.round(cargaDoDrop * 0.8);
-      return { ...passo, base, alvo: { carga: cargaDoDrop, reps: base ? base.reps + 1 : faixa.min }, dica: base ? 'Carga mais baixa: passe o treino anterior.' : 'Carga mais baixa: vá até onde der.' };
+      // Um drop so e o do Jorlan (16/11/2026): metade da carga e o dobro de reps. Mais de um: 20% a cada.
+      const umSo = exercicio.drops === 1;
+      cargaDoDrop = base && tipo === 'bater' ? base.carga : Math.round(cargaDoDrop * (umSo ? 0.5 : 0.8));
+      return { ...passo, base, alvo: { carga: cargaDoDrop, reps: base ? base.reps + 1 : umSo ? faixa.min * 2 : faixa.min }, dica: base ? 'Carga mais baixa: passe o treino anterior.' : 'Carga mais baixa: vá até onde der.' };
     }
     if (passo.t === 'm') {
       const base = anteriores.m[vez.m] ?? null;
@@ -338,6 +359,21 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
         return { ...passo, base, alvo: { carga: cargaDeHoje, reps }, dica: `Mini de ${reps} com a mesma carga.` };
       }
       return { ...passo, base, alvo: { carga: cargaDeHoje, reps: base ? base.reps + 1 : Math.max(1, Math.round(alvoPrincipal / 3)) }, dica: base ? '+1 rep sobre o treino anterior, com a mesma carga.' : 'Mesma carga, até onde der.' };
+    }
+    if (exercicio.metodo === 'piramide') {
+      // Cada degrau e a sua dupla progressao: bateu a meta dele, sobe a carga dele; senao, repete a carga.
+      const k = vez.w;
+      vez.w += 1;
+      const base = validas.filter((s) => !s.t)[k] ?? null;
+      const meta = alvoDaPiramide(k);
+      const fechou = base !== null && base.reps >= meta;
+      const anotada = exercicio.referencia?.cargas?.[k] ?? null;
+      const carga = base ? (fechou ? arredondar(base.carga + passoDeCarga(base.carga)) : base.carga) : anotada ?? cargaDoDegrau;
+      cargaDoDegrau = carga;
+      const dica = base === null ? `Degrau de ${meta}: uma carga que dê ${meta}, mais pesada que a anterior.`
+        : fechou ? `Fechou ${meta} com ${fmtKg(base.carga)}: este degrau sobe para ${fmtKg(carga)}.`
+          : `Mesma carga do treino anterior: busque ${meta}.`;
+      return { ...passo, base, alvo: { carga, reps: meta }, dica };
     }
     const base = trabalho[vez.w] ?? null;
     vez.w += 1;
@@ -357,6 +393,11 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
   });
 
   let texto = `Escolha uma carga que dê ${faixa.min}–${faixa.max} repetições.`;
+  if (exercicio.metodo === 'piramide') {
+    const sobem = passos.filter((x) => !x.t && x.base && x.base.reps >= x.alvo.reps).length;
+    texto = `Pirâmide ${passos.filter((x) => !x.t).map((x) => x.alvo.reps).join('-')}: suba a carga a cada série.${sobem > 0 ? ` ${sobem} ${plural(sobem, 'degrau sobe', 'degraus sobem')} hoje.` : ''}`;
+    return { tipo, carga, faixa, passos, texto };
+  }
   if (tipo === 'subir') {
     const motivo = exercicio.metodo === 'myo' ? `ativação em ${faixa.max} e minis completas`
       : exercicio.metodo === 'restpause' ? `a série principal chegou a ${faixa.max}`
@@ -404,12 +445,22 @@ export function resultadoDoExercicio(exercicio, series, ultima) {
   const antes = ultima ? progressao(exercicio, ultima.series) : null;
   const fim = { liberou: hoje.sobe ? hoje.nova : null, faltam: hoje.faltam, nova: hoje.nova };
   if (antes === null) return { tipo: 'nova', texto: 'Primeiro registro', ...fim };
+  // Piramide: degrau com degrau. Somou carga nos degraus? Isso e o que conta; senao, as reps.
+  if (exercicio.metodo === 'piramide') {
+    const a = feitas(series).filter((s) => !s.t);
+    const b = feitas(ultima.series).filter((s) => !s.t);
+    let dCarga = 0;
+    let dReps = 0;
+    b.forEach((base, i) => { if (a[i]) { dCarga += a[i].carga - base.carga; dReps += a[i].reps - base.reps; } });
+    const v = dCarga !== 0 ? veredito({ carga: dCarga, reps: 0 }, { carga: 0, reps: 0 }) : veredito({ carga: 0, reps: dReps }, { carga: 0, reps: 0 });
+    return { tipo: v.tipo, texto: v.texto, ...fim };
+  }
   // Com a mesma carga, compara serie com serie (trabalho com trabalho, mini com mini,
   // drop com drop). Serie a mais, sem base, nao conta; serie do roteiro de hoje que
   // existia na base e nao foi feita conta como zero.
   const grupos = (lista, carga) => {
     const v = feitas(lista);
-    return { w: v.filter((s) => !s.t && s.carga === carga), m: v.filter((s) => s.t === 'm'), d: v.filter((s) => s.t === 'd') };
+    return { w: v.filter((s) => !s.t && (exercicio.metodo === 'piramide' || s.carga === carga)), m: v.filter((s) => s.t === 'm'), d: v.filter((s) => s.t === 'd') };
   };
   const a = grupos(series, hoje.carga);
   const b = grupos(ultima.series, antes.carga);
@@ -494,6 +545,9 @@ export function regraDaSerie(exercicio, passo, proximo = null) {
     return { ate: 'falha', curto: 'Até a falha', durante: `Última antes dos drops: até a falha. Ao parar, baixe para ${fmtKg(proximo.alvo.carga)}.` };
   }
   if (exercicio.metodo === 'fst7') return { ate: 'meta', curto: 'Até a meta', durante: `Mesma carga nas 7 séries, descanso curto entre elas${nota}.` };
+  if (exercicio.metodo === 'iso') return { ate: 'meta', curto: 'Iso + direta', durante: `${METODOS.iso.isoReps} reps segurando ${METODOS.iso.isoS} s no pico e, sem soltar, ${passo.alvo.reps} direto${nota}.` };
+  if (exercicio.metodo === 'altsim') return { ate: 'meta', curto: 'Alt + junto', durante: `Metade alternando (cada lado conta 1), metade com os dois juntos, sem parar${nota}.` };
+  if (exercicio.metodo === 'piramide') return { ate: 'meta', curto: 'Pirâmide', durante: `Degrau de ${passo.alvo.reps}: carga mais pesada que a anterior${nota}.` };
   // Serie comum: a meta ja esta no cartao; aqui so a nota do exercicio, se houver.
   return { ate: 'meta', curto: 'Até a meta', durante: exercicio.nota };
 }
@@ -850,7 +904,8 @@ function retaPorSemana(pontos) {
 }
 
 export function analiseDoExercicio(exercicio, sessoes, hoje) {
-  const hist = historicoDoExercicio(exercicio, sessoes, hoje);
+  // A leitura so usa o que foi feito do jeito de agora (desde); a trajetoria do Historico mostra tudo.
+  const hist = historicoDoExercicio(exercicio, exercicio.desde ? sessoes.filter((s) => s.dia >= exercicio.desde) : sessoes, hoje);
   const ultima = ultimaVez(exercicio, sessoes, hoje);
   const prog = ultima ? progressao(exercicio, ultima.series) : null;
   const faixa = faixaDe(exercicio);
@@ -928,7 +983,7 @@ export function analiseDoExercicio(exercicio, sessoes, hoje) {
  * { carga, texto } ou null.
  */
 export function ajusteEntreSeries(exercicio, serieFeita) {
-  if (!serieFeita || serieFeita.t || serieFeita.carga <= 0) return null;
+  if (!serieFeita || serieFeita.t || serieFeita.carga <= 0 || exercicio.metodo === 'piramide') return null;
   const faixa = faixaDe(exercicio);
   const passo = passoDeCarga(serieFeita.carga);
   if (serieFeita.reps >= faixa.max + 3) {

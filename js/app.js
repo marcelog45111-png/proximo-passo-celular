@@ -2297,6 +2297,14 @@ function abrirEditor(diaSemana) {
       }
       const escolher = (fazer) => { lerEx(); fazer(); redesenhar(); atualizarTopo(); };
       const metodoChips = chips(`metodo-${ex.id}`, 'Método', [['', 'Normal'], ...Object.entries(METODOS).map(([id, m]) => [id, m.nome])], ex.metodo ?? '', (v) => escolher(() => {
+        // Trocou o metodo: as series de antes eram outra coisa e nao servem de treino anterior (16/11/2026).
+        // A carga de trabalho de ate agora fica como ponto de partida, sem repeticoes inventadas.
+        if ((v || null) !== (ex.metodo ?? null)) {
+          const u = ultimaVez(ex, sessoesDoConfig(app.estado.config), hoje());
+          const carga = u ? Math.max(...u.series.filter((x) => !x.t).map((x) => x.carga), 0) : ex.referencia?.carga ?? 0;
+          ex.desde = hoje();
+          ex.referencia = carga > 0 ? { carga, reps: [] } : null;
+        }
         ex.metodo = v || null;
         if (METODOS[ex.metodo]?.series) ex.series = METODOS[ex.metodo].series;
         ex.drops = ex.metodo === 'drop' ? METODOS.drop.drops : 0;
