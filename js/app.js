@@ -519,15 +519,14 @@ function telaTreino() {
   const treino = treinoAnotado(app.diaTreino, sessao);
   const sessoes = sessoesDoConfig(app.estado.config);
   // O cardio e do DIA escolhido (11/11/2026, "eu adiciono que fiz 20 min e ele coloca na semana
-  // inteira"): o cartao mostrava sempre o de hoje em qualquer dia da faixa. So hoje registra; dia que
-  // passou mostra o daquele dia so para ver; dia que vem nao tem cardio. No domingo a faixa ja e a
+  // inteira"): o cartao mostrava sempre o de hoje em qualquer dia da faixa. Cada dia mostra o seu
+  // (16/11/2026: todo dia tem o cartao; o passado registra no proprio dia, o futuro so mostra). No domingo a faixa ja e a
   // semana que vem (hoje nao esta nela): o cartao de hoje fica, com o nome dizendo que e de hoje.
   const cardioDeHoje = dataDoDia === dia || semanaHoje === 0;
   const sessaoDoDia = dataDoDia === dia ? sessao : sessaoDe(dataDoDia);
-  const cartaoDoCardio = () => (cardioDeHoje
-    ? cartaoCardio(sessao, { deHoje: dataDoDia !== dia })
-    : dataDoDia < dia && sessaoDoDia.cardios.length > 0 ? cartaoCardio(sessaoDoDia, { soLeitura: true }) : null);
-  const cardioNaBarra = cardioDaBarra(cardioDeHoje ? sessao : dataDoDia < dia ? sessaoDoDia : { cardios: [] });
+  const sessaoDoCardio = cardioDeHoje ? sessao : sessaoDoDia;
+  const cartaoDoCardio = () => cartaoCardio(sessaoDoCardio, { deHoje: cardioDeHoje && dataDoDia !== dia, futuro: !cardioDeHoje && dataDoDia > dia });
+  const cardioNaBarra = cardioDaBarra(sessaoDoCardio);
 
   if (treino === null) {
     dadosDaBarra = { chave: `descanso-${app.diaTreino}`, placas: [], cardio: cardioNaBarra };
@@ -757,7 +756,7 @@ function telaDeOutraSemana(plano, faixa, data, dia) {
         u?.series?.length ? h('p', { class: 'discreto', texto: `Última vez: ${new Set(u.series.map((x) => x.carga)).size === 1 ? `${u.series.map((x) => x.reps).join(', ')} reps · ${kg(u.series[0].carga)}` : textoDasSeries(u.series)}` }) : null));
     });
   }
-  if (passado && sessao.cardios.length > 0) tela.append(cartaoCardio(sessao, { soLeitura: true }));
+  tela.append(cartaoCardio(sessao, { futuro: !passado }));
   tela.append(h('button', { class: 'botao cheio botao-rodape', onclick: voltarParaEstaSemana, texto: 'Voltar para esta semana' }));
   return tela;
 }
@@ -1109,13 +1108,18 @@ function fracaoDoCardio(sessao) {
 const cardioDaBarra = (sessao) => ({ f: fracaoDoCardio(sessao), meta: metaDoCardio() !== null });
 const numeroDoCampo = (t) => { const v = Number(String(t).replace(',', '.')); return String(t).trim() !== '' && Number.isFinite(v) && v > 0 ? v : null; };
 
-function cartaoCardio(sessao, { soLeitura = false, deHoje = false } = {}) {
+// Todo dia tem o seu cartao (16/11/2026, "o cardio literalmente ta sumindo de alguns dias"): antes so
+// hoje e os dias passados COM cardio tinham; dia passado sem registro e os dias da frente ficavam sem
+// nada. Agora: hoje e dias passados registram e editam no proprio dia (esqueceu de anotar ontem? da);
+// dia que vem mostra o cartao, mas so registra quando chegar.
+function cartaoCardio(sessao, { futuro = false, deHoje = false } = {}) {
+  const soLeitura = futuro;
   const lista = sessao.cardios ?? [];
   const total = minutosDeCardio(sessao);
   const kcal = lista.reduce((n, c) => n + (c.kcal ?? 0), 0);
   const meta = metaDoCardio();
   const fracao = fracaoDoCardio(sessao);
-  const chave = soLeitura ? `cardio-${sessao.dia}` : 'cardio';
+  const chave = `cardio-${sessao.dia}`;
 
   const raio = 24;
   const volta = 2 * Math.PI * raio;
@@ -1129,7 +1133,7 @@ function cartaoCardio(sessao, { soLeitura = false, deHoje = false } = {}) {
   movimento.contar(minutos, `${chave}-min`, total, n0);
 
   const subtitulo = lista.length === 0
-    ? 'Extra: registre só se fizer.'
+    ? (futuro ? 'Extra: você registra no dia.' : sessao.dia < hoje() ? 'Nada registrado neste dia.' : 'Extra: registre só se fizer.')
     : [meta ? (total >= meta ? `meta de ${meta} min batida` : `faltam ${n0(meta - total)} min da meta`) : null, kcal > 0 ? `${n0(kcal)} kcal` : null, lista.length > 1 ? `${lista.length} registros` : null].filter(Boolean).join(' · ') || (lista[0].tipo || 'Cardio');
   const nomeDaIntensidade = (c) => (c.intensidade ? INTENSIDADES_DO_CARDIO[c.intensidade] : null);
   return h('section', { class: 'cartao cartao-cardio', 'aria-label': 'Cardio', 'data-feito': total > 0 ? 'sim' : null },
@@ -1151,10 +1155,10 @@ function cartaoCardio(sessao, { soLeitura = false, deHoje = false } = {}) {
       ];
       return h('li', {}, soLeitura
         ? h('div', { class: 'cardio-item' }, dentro)
-        : h('button', { class: 'cardio-item', type: 'button', 'aria-label': `${c.tipo || 'Cardio'}, ${n0(c.minutos)} minutos${info ? `, ${info}` : ''}. Editar`, onclick: () => abrirCardio(c.id) }, dentro));
+        : h('button', { class: 'cardio-item', type: 'button', 'aria-label': `${c.tipo || 'Cardio'}, ${n0(c.minutos)} minutos${info ? `, ${info}` : ''}. Editar`, onclick: () => abrirCardio(c.id, sessao.dia) }, dentro));
     })),
-    soLeitura ? null : h('button', { class: 'botao cheio cardio-mais', type: 'button', onclick: () => abrirCardio(null) },
-      icone('mais'), lista.length === 0 ? 'Adicionar cardio' : 'Adicionar outro cardio'));
+    soLeitura ? null : h('button', { class: 'botao cheio cardio-mais', type: 'button', onclick: () => abrirCardio(null, sessao.dia) },
+      icone('mais'), lista.length === 0 ? (sessao.dia < hoje() ? 'Adicionar cardio neste dia' : 'Adicionar cardio') : 'Adicionar outro cardio'));
 }
 
 /** Pilulas que trocam na hora (sem redesenhar a folha); a luz desliza para a escolhida. */
@@ -1172,9 +1176,9 @@ function pilulas(chave, rotulo, opcoes, valor, escolher) {
   return { el: grupo, marcar };
 }
 
-/** Registrar um cardio novo (id null) ou mudar um que ja esta no dia. */
-function abrirCardio(id) {
-  const sessao = sessaoDe(hoje());
+/** Registrar um cardio novo (id null) ou mudar um que ja esta no dia (hoje, ou um dia que passou). */
+function abrirCardio(id, dia = hoje()) {
+  const sessao = sessaoDe(dia);
   const antigo = id ? (sessao.cardios ?? []).find((c) => c.id === id) ?? null : null;
   // Um novo comeca como o ultimo que a pessoa fez (hoje ou em outro dia).
   const ultimo = (sessao.cardios ?? []).at(-1) ?? sessoesDoConfig(app.estado.config).find((s) => (s.cardios ?? []).length > 0)?.cardios.at(-1) ?? null;
@@ -1210,14 +1214,14 @@ function abrirCardio(id) {
   const tirar = antigo ? h('button', {
     class: 'botao texto perigo cheio', type: 'button', onclick: (ev) => {
       if (ev.currentTarget.dataset.certeza !== 'sim') { ev.currentTarget.dataset.certeza = 'sim'; ev.currentTarget.textContent = 'Tocar de novo para tirar'; return; }
-      const s = sessaoDe(hoje());
+      const s = sessaoDe(dia);
       s.cardios = (s.cardios ?? []).filter((c) => c.id !== antigo.id);
       gravarSessao(s);
       d.close();
     }, texto: 'Tirar este cardio',
   }) : null;
 
-  const d = folha(antigo ? 'Editar cardio' : 'Adicionar cardio', [
+  const d = folha(`${antigo ? 'Editar cardio' : 'Adicionar cardio'}${dia !== hoje() ? ` · ${dataCurta(dia)}` : ''}`, [
     h('div', { class: 'cartao cardio-folha' },
       secao('Tipo', tipo.el),
       secao('Quanto tempo', passoMin, rapidos.el),
@@ -1231,7 +1235,7 @@ function abrirCardio(id) {
         const min = numeroDoCampo(campoMin.value);
         if (min === null) { campoMin.focus(); movimento.nega(campoMin); return false; }
         if (atual.meta !== (metaDoCardio() ?? 0)) mudar((e) => definirConfig(e, 'cardioMeta', String(atual.meta)));
-        const s = sessaoDe(hoje());
+        const s = sessaoDe(dia);
         const novo = { id: antigo?.id ?? `c${Date.now().toString(36)}`, tipo: atual.tipo, minutos: Math.round(min), kcal: numeroDoCampo(campoKcal.value), intensidade: atual.intensidade };
         s.cardios = antigo ? (s.cardios ?? []).map((c) => (c.id === antigo.id ? novo : c)) : [...(s.cardios ?? []), novo];
         gravarSessao(s);
