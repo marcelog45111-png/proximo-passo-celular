@@ -54,6 +54,8 @@ function lerExercicio(e) {
     // feeling: sem cronometro. Os intervalos do metodo (drop, myo, rest-pause, FST-7) valem sempre.
     descansoS: numero(e.descansoS) !== null && e.descansoS >= 15 && e.descansoS <= 600 ? Math.round(e.descansoS) : null,
     nota: typeof e.nota === 'string' ? e.nota : '',
+    // O link do video da execucao (16/11/2026; execucao.js). Vazio = vale o da biblioteca, se houver.
+    video: typeof e.video === 'string' && /^https:\/\//i.test(e.video.trim()) ? e.video.trim() : '',
     aquecimento: Array.isArray(e.aquecimento) ? e.aquecimento.map(serie).filter((s) => s.reps > 0) : [],
     // Como aquecer, escolhido no Editar treino: auto (a regra do dia), nenhum ou manual (a lista
     // acima). Sem escolha: manual se ha lista, senao auto.

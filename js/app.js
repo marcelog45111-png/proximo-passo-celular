@@ -14,6 +14,7 @@ import * as movimento from './movimento.js';
 import { cargaReps, h, icone, numeroBr, selo } from './dom.js';
 import { abrirJogo, jogoAberto } from './jogo.js';
 import { corresponder, interpretarTreino, LIMITES, notaDoImportado, paraPlano } from './importar.js';
+import { lerBiblioteca, lerVideo, videoDoExercicio } from './execucao.js';
 
 // ---------- guardado no aparelho ----------
 
@@ -78,6 +79,8 @@ const app = {
 };
 
 const salvarEstado = () => guardado.gravar('estado', app.estado);
+// A biblioteca de execucao (16/11/2026, execucao.js): a ultima baixada fica no aparelho para abrir sem internet.
+let biblioteca = lerBiblioteca({ exercicios: guardado.ler('biblioteca', []) });
 
 // ---------- DOM ----------
 
@@ -475,6 +478,9 @@ function telaTreino() {
       h('p', { class: 'discreto', texto: 'Monte o seu: os dias da semana e os exercícios de cada um. Se você usa o app do computador, o treino de lá chega sozinho.' }),
       h('button', { class: 'botao principal cheio', style: 'margin-top:10px', onclick: () => abrirEditor(semanaHoje), texto: 'Montar treino' }),
       h('button', { class: 'botao cheio imp-entrada', style: 'margin-top:8px', onclick: () => abrirImportacao() }, icone('ia'), 'Importar treino com IA (foto ou texto)')));
+    // O cardio vale para todos, com ou sem treino montado (16/11/2026, "o cardio nao aparece para todos
+    // os usuarios"): quem acabou de criar a conta pelo iPhone nao tem plano e ficava sem o cartao.
+    vazia.append(cartaoCardio(sessaoDe(dia)));
     return vazia;
   }
 
@@ -898,6 +904,8 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
   if (metodo) cartao.append(h('p', { class: 'ex-metodo' }, h('b', { texto: metodo.nome }), ` ${metodo.resumo}`));
   if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
+  // O video da execucao (o seu ou o da biblioteca), a um toque.
+  if (videoDoExercicio(ex, biblioteca)) cartao.append(h('button', { class: 'ex-video', type: 'button', onclick: () => abrirExecucao(ex.id) }, icone('comecar'), 'Ver a execução'));
   cartao.append(h('p', { class: 'sugestao', 'data-tipo': plano.tipo }, plano.tipo === 'subir' ? icone('liberada') : null, h('span', { texto: plano.tipo === 'subir' ? `Carga liberada. ${plano.texto}` : plano.texto })));
 
   if (ultima) cartao.append(h('p', { class: 'ex-linha', texto: `Treino anterior: ${quandoFoi(ultima)}` }));
@@ -1007,6 +1015,8 @@ function partidaDe(exId, comecarEm) {
     noPlano: () => roteiro(ex).length,
     descansar: (segundos, rotulo, texto) => comecarDescanso(segundos, rotulo, texto, { exId: ex.id, dia: app.diaTreino }),
     pararDescanso,
+    verExecucao: () => abrirExecucao(ex.id),
+    temVideo: () => videoDoExercicio(exercicioDoPlano(ex.id) ?? ex, biblioteca) !== null,
     cena: {
       montar: (host) => cenaDaBarra?.montarEm(host),
       atualizar: () => {
@@ -1027,7 +1037,7 @@ function jogar(exId, passo) {
   const partida = partidaDe(exId, passo);
   if (partida === null) return;
   abrirJogo(partida, ({ mudou, ex }) => {
-    if (descanso) document.body.append(descanso.el);
+    if (descanso) { document.body.append(descanso.el); descanso.tique(); }
     if (mudou && completoNaSessao(ex, sessaoDe(hoje()))) app.abertos.delete(ex.id);
     desenhar();
     if (mudou) {
@@ -1035,7 +1045,7 @@ function jogar(exId, passo) {
     }
   });
   // Um descanso que ja corria (voltou pela pilula ou abriu outro exercicio) entra na partida com ela.
-  if (descanso) jogoAberto()?.descansoHost.append(descanso.el);
+  if (descanso) { jogoAberto()?.descansoHost.append(descanso.el); descanso.tique(); }
 }
 
 // A linha vazia da posicao k, com o tipo do roteiro (aquecimento, mini, drop) para a lista nao andar.
@@ -1262,52 +1272,109 @@ function voltarAoPendente(de) {
   if (prox) jogar(prox.ex.id, null);
 }
 
+// A ilha do descanso (16/11/2026). Pedido: "a regra do cronometro ta zoada, nao tem pausa, e tem que
+// ser tipo a ilha do iphone e melhor apresentavel pro usuario". Uma pilula preta no topo, como a
+// Dynamic Island com uma Atividade ao Vivo: o anel que esvazia, o nome e o tempo. Tocar abre a ilha
+// com Pausar/Retomar, -15 s, +15 s, Pular e (fora da serie) Voltar para a serie. Dentro da serie ela
+// fica logo abaixo do topo; fora, presa no alto da tela.
+// O tempo e guardado no aparelho: o iPhone pode fechar o app em segundo plano e o descanso volta de
+// onde estava ao abrir de novo.
 function comecarDescanso(segundos, rotulo = 'Descanso', texto = '', de = null) {
+  montarDescanso({ fim: Date.now() + segundos * 1000, total: segundos * 1000, pausadoResta: null, rotulo, texto, de, apitos: 0 });
+}
+
+function montarDescanso(estado) {
   pararDescanso();
-  const el = h('div', { class: 'descanso', role: 'timer', 'aria-live': 'off' });
-  const tempo = h('b');
-  const nomeEl = h('span', { class: 'descanso-rotulo', texto: rotulo });
-  const textoEl = h('span', { class: 'descanso-texto', texto });
-  const barra = h('i', { class: 'descanso-barra', 'aria-hidden': 'true' });
-  const mais = h('button', { class: 'botao', onclick: () => { descansoFim = Math.max(descansoFim, Date.now()) + 30_000; descansoTotal += 30_000; apitos = 0; }, texto: '+30s' });
-  el.dataset.rotulo = rotulo;
-  const abrir = h('button', { class: 'descanso-abrir', type: 'button', 'aria-label': 'Voltar para a série', onclick: () => voltarAoPendente(de) },
-    tempo, h('span', { class: 'pequeno' }, nomeEl, textoEl), icone('seguir'));
-  el.append(abrir, mais,
-    h('button', { class: 'botao', onclick: pararDescanso, texto: 'Pular' }), barra);
-  let descansoFim = Date.now() + segundos * 1000;
-  let descansoTotal = segundos * 1000;
-  let apitos = 0;
-  const tique = () => {
-    const resta = Math.ceil((descansoFim - Date.now()) / 1000);
-    barra.style.transform = `scaleX(${Math.max(0, (descansoFim - Date.now()) / descansoTotal)})`;
-    if (resta <= 0) {
-      const passou = Math.floor((Date.now() - descansoFim) / 1000);
+  const s = estado;
+  const el = h('div', { class: 'ilha', role: 'timer', 'aria-live': 'off', 'data-aberta': 'nao' });
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'ilha-anel');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = '<circle cx="12" cy="12" r="9" pathLength="1" class="ilha-anel-fundo"/><circle cx="12" cy="12" r="9" pathLength="1" class="ilha-anel-cheio"/>';
+  const cheio = svg.querySelector('.ilha-anel-cheio');
+  const nomeEl = h('span', { class: 'ilha-nome' });
+  const tempo = h('b', { class: 'ilha-tempo' });
+  const textoEl = h('p', { class: 'ilha-texto' });
+  const pausa = h('button', { class: 'ilha-botao ilha-pausa', type: 'button', onclick: () => alternarPausa() });
+  const menos = h('button', { class: 'ilha-botao', type: 'button', 'aria-label': 'Menos 15 segundos', onclick: () => somar(-15) }, '−15');
+  const mais = h('button', { class: 'ilha-botao', type: 'button', 'aria-label': 'Mais 15 segundos', onclick: () => somar(15) }, '+15');
+  const pular = h('button', { class: 'ilha-botao ilha-pular', type: 'button', onclick: pararDescanso, texto: 'Pular' });
+  const voltar = h('button', { class: 'ilha-voltar', type: 'button', onclick: () => { fechar(); voltarAoPendente(s.de); } }, 'Voltar para a série', icone('seguir'));
+  const topo = h('button', { class: 'ilha-topo', type: 'button', 'aria-expanded': 'false', onclick: () => (el.dataset.aberta === 'sim' ? fechar() : abrir()) },
+    svg, nomeEl, tempo);
+  el.append(topo, h('div', { class: 'ilha-corpo' }, h('div', { class: 'ilha-dentro' }, textoEl, h('div', { class: 'ilha-botoes' }, menos, pausa, mais, pular), voltar)));
+
+  const fmt = (seg) => `${Math.floor(seg / 60)}:${String(seg % 60).padStart(2, '0')}`;
+  const resta = () => (s.pausadoResta ?? (s.fim - Date.now()));
+  const guardar = () => guardado.gravar('descanso', { fim: s.fim, total: s.total, pausadoResta: s.pausadoResta, rotulo: s.rotulo, texto: s.texto, de: s.de, apitos: s.apitos });
+  let fecharDepois = null;
+  function abrir() { el.dataset.aberta = 'sim'; topo.setAttribute('aria-expanded', 'true'); clearTimeout(fecharDepois); }
+  function fechar() { el.dataset.aberta = 'nao'; topo.setAttribute('aria-expanded', 'false'); clearTimeout(fecharDepois); }
+  function alternarPausa() {
+    if (s.pausadoResta === null) s.pausadoResta = Math.max(0, s.fim - Date.now());
+    else { s.fim = Date.now() + s.pausadoResta; s.pausadoResta = null; }
+    guardar();
+    tique();
+  }
+  function somar(seg) {
+    if (s.pausadoResta !== null) s.pausadoResta = Math.max(0, s.pausadoResta + seg * 1000);
+    else s.fim = (seg > 0 ? Math.max(Date.now(), s.fim) : s.fim) + seg * 1000;
+    s.total = Math.max(1000, s.total + seg * 1000);
+    if (resta() > 0) s.apitos = 0;
+    guardar();
+    tique();
+  }
+  function tique() {
+    const r = resta();
+    const pausado = s.pausadoResta !== null;
+    el.dataset.pausado = pausado ? 'sim' : 'nao';
+    pausa.replaceChildren(icone(pausado ? 'comecar' : 'pausa'), pausado ? 'Retomar' : 'Pausar');
+    pausa.setAttribute('aria-pressed', pausado ? 'true' : 'false');
+    cheio.style.strokeDashoffset = String(1 - Math.max(0, Math.min(1, r / s.total)));
+    voltar.hidden = jogoAberto() !== null || !s.de;
+    if (r <= 0) {
+      const passou = Math.floor(-r / 1000);
       el.dataset.passou = 'sim';
-      tempo.textContent = `+${Math.floor(passou / 60)}:${String(passou % 60).padStart(2, '0')}`;
+      tempo.textContent = `+${fmt(passou)}`;
       nomeEl.textContent = 'Passou do descanso';
-      textoEl.textContent = `Combinado: ${Math.floor(descansoTotal / 60000)}:${String(Math.round(descansoTotal / 1000) % 60).padStart(2, '0')}`;
+      textoEl.textContent = `Combinado: ${fmt(Math.round(s.total / 1000))}. Pode começar a próxima série.`;
       const devidos = 1 + Math.floor(passou / 30);
-      if (apitos < devidos) { apitos = devidos; apito(); }
+      if (s.apitos < devidos) { s.apitos = devidos; guardar(); apito(); }
       return;
     }
-    if (el.dataset.passou) {
-      delete el.dataset.passou;
-      nomeEl.textContent = rotulo;
-      textoEl.textContent = texto;
-    }
-    tempo.textContent = `${Math.floor(resta / 60)}:${String(resta % 60).padStart(2, '0')}`;
-  };
-  // Com a partida aberta, o descanso conta dentro dela; fechou, desce para a pilula de baixo.
+    delete el.dataset.passou;
+    tempo.textContent = fmt(Math.ceil(r / 1000));
+    nomeEl.textContent = pausado ? 'Pausado' : s.rotulo;
+    textoEl.textContent = s.texto || (pausado ? 'O descanso está parado. Toque em Retomar.' : 'Respire. A próxima série começa quando o tempo acabar.');
+  }
+  el.dataset.rotulo = s.rotulo;
+  // Com a partida aberta, a ilha fica dentro dela, abaixo do topo; fechou, sobe para o alto da tela.
   (jogoAberto()?.descansoHost ?? document.body).append(el);
-  descanso = { el, relogio: setInterval(tique, 250) };
+  // Tocar fora da ilha aberta fecha ela, como no iPhone.
+  const foraDaIlha = (ev) => { if (el.dataset.aberta === 'sim' && !el.contains(ev.target)) fechar(); };
+  document.addEventListener('pointerdown', foraDaIlha, true);
+  descanso = { el, relogio: setInterval(tique, 250), tique, soltar: () => document.removeEventListener('pointerdown', foraDaIlha, true) };
+  guardar();
   tique();
+  // Nasce aberta por um instante, como a ilha do iPhone quando uma atividade comeca.
+  abrir();
+  fecharDepois = setTimeout(fechar, 2600);
 }
 function pararDescanso() {
   if (descanso === null) return;
   if (descanso.relogio) clearInterval(descanso.relogio);
+  descanso.soltar?.();
   descanso.el.remove();
   descanso = null;
+  guardado.gravar('descanso', null);
+}
+/** O descanso que estava correndo quando o app fechou volta (ate 15 min depois de acabar). */
+function retomarDescanso() {
+  const g = guardado.ler('descanso');
+  if (!g || typeof g.total !== 'number' || typeof g.fim !== 'number') return;
+  if (g.pausadoResta === null && Date.now() - g.fim > 15 * 60_000) { guardado.gravar('descanso', null); return; }
+  montarDescanso({ ...g, pausadoResta: typeof g.pausadoResta === 'number' ? g.pausadoResta : null, apitos: Number(g.apitos) || 0 });
 }
 function apito() {
   try {
@@ -1341,6 +1408,101 @@ function folha(titulo, corpo, { acao = null, aoFechar = null } = {}) {
   document.body.append(d);
   d.showModal();
   return d;
+}
+
+// ---------- execucao: o video de como fazer (16/11/2026) ----------
+// Pedido: "ao usuario clicar em execucao, mostrar um video de como a serie e feita ... pode ser
+// configurado pelo usuario OU se existir a serie q eu fiz como referencia". O link da pessoa vence;
+// sem ele, o da biblioteca com o nome parecido (videoDoExercicio). As contas moram em execucao.js.
+
+async function carregarBiblioteca() {
+  try {
+    const r = await fetch('biblioteca.json', { cache: 'no-cache' });
+    if (!r.ok) return;
+    const lista = lerBiblioteca(await r.json());
+    const mudou = JSON.stringify(lista) !== JSON.stringify(biblioteca);
+    biblioteca = lista;
+    guardado.gravar('biblioteca', lista);
+    if (mudou && app.cifra !== null && !document.querySelector('dialog[open]')) desenhar();
+  } catch {
+    // sem internet: vale a guardada
+  }
+}
+
+/** O exercicio como esta gravado no plano (com o link do video), pelo id. */
+function exercicioDoPlano(id) {
+  for (const d of planoTreino().dias) for (const e of d.exercicios) if (e.id === id) return e;
+  return null;
+}
+
+/** Grava (ou tira, com '') o link do video do exercicio, mexendo so nele no plano gravado. */
+function gravarVideo(exId, url) {
+  let bruto;
+  try {
+    bruto = JSON.parse(app.estado.config.treinoPlano ?? '{"dias":[]}');
+  } catch {
+    return false;
+  }
+  let achou = false;
+  for (const d of bruto?.dias ?? []) for (const e of d?.exercicios ?? []) if (e?.id === exId) { e.video = url; achou = true; }
+  if (achou) mudar((e) => definirConfig(e, 'treinoPlano', JSON.stringify(bruto)));
+  return achou;
+}
+
+/** O player do video: dentro do app quando da (YouTube, Vimeo, Instagram, TikTok, arquivo), senao o link. */
+function playerDoVideo(v) {
+  if (v.tipo === 'arquivo') {
+    const video = h('video', { class: 'exec-player', src: v.url, controls: true, playsinline: true, loop: true, muted: true, autoplay: true, preload: 'metadata' });
+    video.muted = true;
+    return video;
+  }
+  if (v.embed) {
+    return h('iframe', {
+      class: `exec-player${v.tipo === 'instagram' || v.tipo === 'tiktok' ? ' em-pe' : ''}`, src: v.embed, title: 'Vídeo da execução',
+      allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: true, referrerpolicy: 'strict-origin-when-cross-origin',
+    });
+  }
+  return h('a', { class: 'botao cheio exec-abrir', href: v.url, target: '_blank', rel: 'noopener' }, icone('comecar'), 'Abrir o vídeo');
+}
+
+const ORIGEM_DO_VIDEO = { youtube: 'YouTube', vimeo: 'Vimeo', instagram: 'Instagram', tiktok: 'TikTok', arquivo: 'o navegador', link: 'o navegador' };
+
+function abrirExecucao(exId) {
+  const inicial = exercicioDoPlano(exId);
+  if (inicial === null) return;
+  const corpo = h('div', { class: 'exec' });
+  const desenharExec = () => {
+    const ex = exercicioDoPlano(exId) ?? inicial;
+    const v = videoDoExercicio(ex, biblioteca);
+    const campo = h('input', { class: 'campo', type: 'url', inputmode: 'url', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'done', value: ex.video, placeholder: 'https://youtube.com/…', 'aria-label': 'Link do vídeo da execução' });
+    const aviso = h('p', { class: 'ed-explica', role: 'status' });
+    const salvar = () => {
+      const url = campo.value.trim();
+      if (url !== '' && lerVideo(url) === null) { aviso.textContent = 'Use o link completo, começando com https://'; movimento.nega(campo); return; }
+      if (url === ex.video) return;
+      gravarVideo(exId, url);
+      desenharExec();
+    };
+    campo.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); salvar(); } });
+    corpo.replaceChildren(
+      v ? h('div', { class: 'exec-video' }, playerDoVideo(v.video)) : h('div', { class: 'exec-vazio' },
+        icone('comecar'),
+        h('b', { texto: 'Ainda não há vídeo deste exercício' }),
+        h('p', { texto: 'Cole abaixo o link de um vídeo mostrando a execução: YouTube, Instagram, TikTok ou Vimeo.' })),
+      v ? h('p', { class: 'exec-origem' },
+        h('span', { class: 'chip', texto: v.origem === 'seu' ? 'Seu vídeo' : 'Da biblioteca' }),
+        v.origem === 'biblioteca' && v.nome.toLowerCase() !== ex.nome.toLowerCase() ? h('span', { texto: `de “${v.nome}”` }) : null,
+        v.video.embed ? h('a', { href: v.video.url, target: '_blank', rel: 'noopener', texto: `Abrir no ${ORIGEM_DO_VIDEO[v.video.tipo]}` }) : null) : null,
+      ex.nota ? h('div', { class: 'cartao exec-nota' }, h('span', { class: 'jogo-rotulo', texto: 'Como fazer' }), h('p', { texto: ex.nota })) : null,
+      h('div', { class: 'cartao exec-link' },
+        h('label', { class: 'ed-sub' }, h('span', { texto: ex.video ? 'Seu link' : v?.origem === 'biblioteca' ? 'Prefere outro vídeo? Cole o seu link' : 'Link do vídeo' }), campo),
+        aviso,
+        h('div', { class: 'exec-botoes' },
+          ex.video ? h('button', { class: 'botao texto perigo', type: 'button', onclick: () => { gravarVideo(exId, ''); desenharExec(); }, texto: 'Tirar meu vídeo' }) : h('span'),
+          h('button', { class: 'botao principal', type: 'button', onclick: salvar, texto: 'Salvar link' }))));
+  };
+  desenharExec();
+  folha(`Execução: ${inicial.nome}`, [corpo], { aoFechar: () => { if (!jogoAberto()) desenhar(); } }).classList.add('folha-exec');
 }
 
 // ---------- evolucao por semana e trajetoria (11/11/2026) ----------
@@ -2112,6 +2274,19 @@ function abrirEditor(diaSemana) {
         explicarAquecimentos();
         atualizarTopo();
       };
+      // O link do video da execucao (16/11/2026). Vazio = vale o da biblioteca, se houver um parecido.
+      const campoVideo = h('input', { class: 'campo', type: 'url', inputmode: 'url', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: ex.video ?? '', placeholder: 'Link do vídeo (YouTube, Instagram, TikTok…)', 'aria-label': 'Link do vídeo da execução', enterkeyhint: 'done' });
+      const explicaVideo = h('p', { class: 'ed-explica' });
+      const lerVideoDoCampo = () => {
+        ex.video = campoVideo.value.trim();
+        const v = videoDoExercicio({ nome: ex.nome, video: ex.video }, biblioteca);
+        explicaVideo.textContent = ex.video !== '' && lerVideo(ex.video) === null ? 'Use o link completo, começando com https://. Sem isso o vídeo não entra.'
+          : ex.video !== '' ? 'Aparece ao tocar em Execução na série.'
+            : v ? `Sem link seu: vale o da biblioteca (${v.nome}).` : 'Opcional. Aparece ao tocar em Execução na série.';
+      };
+      lerVideoDoCampo();
+      campoVideo.addEventListener('input', lerVideoDoCampo);
+      campoVideo.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') campoVideo.blur(); });
       for (const c of [campoNome, nota]) {
         c.addEventListener('input', lerEx);
         c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') c.blur(); });
@@ -2176,7 +2351,7 @@ function abrirEditor(diaSemana) {
           h('div', { class: 'ed-linha-num' }, h('span', { texto: rotuloSeries }), pSeries.el),
           h('div', { class: 'ed-linha-num em-pe' }, h('span', { texto: 'Repetições por série' }), h('div', { class: 'ed-faixa' }, pMin.el, h('span', { texto: 'a' }), pMax.el)),
           explicaCarga),
-        secao('Execução', nota),
+        secao('Execução', nota, campoVideo, explicaVideo),
         secao('Método', metodoChips,
           h('p', { class: 'ed-explica', texto: METODOS[ex.metodo]?.resumo ?? 'Uma série de cada vez. Os outros métodos só se você quiser.' }),
           pDrops ? h('div', { class: 'ed-linha-num' }, h('span', { texto: 'Drops no fim' }), pDrops.el) : null),
@@ -2208,7 +2383,7 @@ function abrirEditor(diaSemana) {
     lista,
     h('button', {
       class: 'botao cheio ed-novo', onclick: () => {
-        const novo = { id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, descansoS: null, nota: '', aquecimento: [], aquecimentoModo: null, musculo: null, referencia: null };
+        const novo = { id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, descansoS: null, nota: '', video: '', aquecimento: [], aquecimentoModo: null, musculo: null, referencia: null };
         mudarLista(() => { treino.exercicios.push(novo); abertoId = novo.id; });
         atualizarTopo();
         const aberto = lista.querySelector('.ed-ex');
@@ -2571,6 +2746,13 @@ async function perguntar(texto) {
 
 // ---------- comeco ----------
 
+// Sem zoom (16/11/2026, "o app nao pode dar zoom pra fora e nem pra dentro"). O viewport ja diz
+// user-scalable=no, mas o Safari ignora isso desde o iOS 10: a pinca chega como gesturestart/change
+// (so no Safari) e como toque de dois dedos. O toque duplo para de dar zoom pelo touch-action do CSS.
+for (const tipo of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(tipo, (e) => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || (typeof e.scale === 'number' && e.scale !== 1)) e.preventDefault(); }, { passive: false });
+document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
 setInterval(() => { if (document.visibilityState === 'visible') sincronizar(); }, 30_000);
 // A versao nova chega sozinha (11/11/2026, "pra mim no celular nao foi"). O app na Tela de Inicio volta do
@@ -2608,5 +2790,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
     guardado.gravar('segredo', null);
   }
   desenhar();
+  retomarDescanso();
+  carregarBiblioteca();
   if (app.sinc !== null && app.estado.cursor > 0) sincronizar();
 })();

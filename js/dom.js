@@ -30,6 +30,7 @@ const CAMINHOS = {
   fechar: 'M6 6l12 12M18 6L6 18',
   comecar: 'M8 5.5v13l11-6.5Z',
   parar: 'M7 7h10v10H7Z',
+  pausa: 'M9 6v12M15 6v12',
   voltar: 'M15 5l-7 7 7 7',
   avancar: 'M9 5l7 7-7 7',
   lapis: 'M4 20h4.5L19.3 9.2a2.1 2.1 0 0 0 0-3L17.8 4.7a2.1 2.1 0 0 0-3 0L4 15.5V20ZM13.5 6l4.5 4.5',

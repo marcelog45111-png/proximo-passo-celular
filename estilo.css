@@ -70,6 +70,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { font-size: 17px; font: -apple-system-body; }
+/* Sem zoom de pinca nem de toque duplo (16/11/2026; o resto no app.js). */
+html, body { touch-action: pan-x pan-y; }
 html, body { margin: 0; background: var(--fundo); color: var(--texto); }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
@@ -292,6 +294,24 @@ label.rotulo { display: block; font-size: 0.76rem; color: var(--texto-2); margin
 .chip { flex: none; font-size: 0.7rem; font-weight: 600; padding: 3px 8px; border-radius: 8px; background: var(--cartao-2); color: var(--texto-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chip.padrao { background: none; box-shadow: inset 0 0 0 0.5px var(--sep); }
 .ex-nota { font-size: 0.8rem; color: var(--laranja); margin: 5px 0 0; }
+.ex-video { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; margin-top: 6px; padding: 0 12px; border-radius: 999px; font-size: 0.82rem; font-weight: 650; background: color-mix(in srgb, var(--laranja) 16%, transparent); color: var(--laranja); }
+.ex-video svg { width: 13px; height: 13px; fill: currentColor; stroke-width: 1.5; }
+
+/* A folha do video da execucao (16/11/2026). */
+.exec { display: grid; gap: 12px; }
+.exec-video { border-radius: 18px; overflow: hidden; background: #000; }
+.exec-player { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #000; }
+.exec-player.em-pe { aspect-ratio: 9 / 14; max-height: 62dvh; }
+video.exec-player { aspect-ratio: auto; max-height: 62dvh; }
+.exec-vazio { display: grid; justify-items: center; gap: 6px; padding: 26px 18px; border-radius: 18px; background: var(--cartao); text-align: center; }
+.exec-vazio svg { width: 34px; height: 34px; color: var(--laranja); fill: currentColor; stroke-width: 1.2; }
+.exec-vazio p { margin: 0; font-size: 0.88rem; color: var(--texto-2); }
+.exec-origem { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; font-size: 0.84rem; color: var(--texto-2); }
+.exec-origem a { margin-left: auto; color: var(--tinta); font-weight: 600; text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+.exec-nota p { margin: 4px 0 0; }
+.exec-link { display: grid; gap: 6px; }
+.exec-botoes { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.exec-abrir { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; text-decoration: none; }
 .ex-linha { font-size: 0.8rem; color: var(--texto-2); margin: 5px 0 0; font-variant-numeric: tabular-nums; }
 /* A sugestao e a ordem do dia: uma linha com a cor do que ela pede. */
 .sugestao {
@@ -391,38 +411,74 @@ button.serie:active { transform: none; opacity: 1; background: var(--cartao-2); 
 .cr.empilhado .cr-kg { padding: 0 0 2px; background: none; font-size: 0.74em; font-weight: 600; line-height: 1.25; }
 .serie .anterior .cr-reps b { font-weight: 600; }
 .serie .meta .cr-reps b { color: var(--texto-2); }
-/* Descanso: a contagem grande, com a barra que vai esvaziando. */
-.descanso {
-  position: fixed; left: 50%; bottom: calc(var(--base) + 80px); transform: translateX(-50%); z-index: 25;
-  width: min(calc(100vw - 28px), 420px); overflow: hidden;
-  display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 16px; border-radius: 22px;
-  background: var(--vidro); -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42); border: 0.5px solid var(--sep); font-variant-numeric: tabular-nums;
-  animation: sobe-pilula 0.42s cubic-bezier(0.2, 1.3, 0.4, 1);
+/* A ilha do descanso (16/11/2026, "tipo a ilha do iphone"): uma pilula preta no alto, com o anel que
+   esvazia, o nome e o tempo. Tocar abre: o texto e os botoes. Preta nos dois temas, como a do iPhone.
+   Fora da serie fica presa no alto da tela; dentro da serie, logo abaixo do topo. */
+.ilha {
+  --ilha-cor: #39e27a;
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 6px); z-index: 40;
+  translate: -50% 0;
+  width: 236px; max-width: calc(100vw - 24px);
+  border-radius: 24px; background: #000; color: #f5f7f6; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  font-variant-numeric: tabular-nums;
+  transition: width 0.42s cubic-bezier(0.32, 0.72, 0, 1), border-radius 0.42s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.3s;
+  animation: ilha-nasce 0.5s cubic-bezier(0.2, 1.25, 0.4, 1);
 }
-@keyframes sobe-pilula { from { transform: translate(-50%, 18px); opacity: 0; } }
-/* Tocar no tempo e no texto volta para a serie que espera (so fora da partida). */
-.descanso-abrir {
-  flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 8px;
-  padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+@keyframes ilha-nasce { from { width: 126px; opacity: 0; transform: scale(0.85); } }
+.ilha[data-aberta="sim"] { width: min(calc(100vw - 24px), 380px); border-radius: 34px; }
+.ilha[data-passou="sim"] { --ilha-cor: #ff453a; box-shadow: 0 10px 30px rgba(255, 69, 58, 0.35), 0 0 0 1px rgba(255, 69, 58, 0.55); }
+.ilha[data-pausado="sim"] { --ilha-cor: #ffb340; }
+
+.ilha-topo {
+  width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px;
+  padding: 6px 16px 6px 8px; color: inherit; text-align: left;
 }
-.descanso-abrir > svg { flex: none; width: 18px; height: 18px; opacity: 0.7; }
-.jogo-descanso .descanso-abrir { cursor: default; }
-.jogo-descanso .descanso-abrir > svg { display: none; }
-.descanso-barra { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--marca); transform-origin: left; transition: transform 0.25s linear; }
-.descanso .pequeno { flex: 1; display: grid; min-width: 0; line-height: 1.2; }
-.descanso-rotulo { font-weight: 650; color: var(--texto); }
-.descanso-texto { font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.descanso b { font-family: var(--numero); font-size: 1.62rem; font-weight: 700; line-height: 1; letter-spacing: -0.015em; min-width: 64px; }
-.descanso .botao { padding: 0 14px; border-radius: 16px; }
-.descanso[data-fim="sim"] { background: var(--marca); color: var(--sobre-tinta); }
-.descanso[data-fim="sim"] .pequeno { color: inherit; }
-.descanso[data-fim="sim"] .descanso-barra { display: none; }
-/* Passou do descanso combinado: vermelho, contando o quanto passou. */
-.descanso[data-passou="sim"] { background: #ff453a !important; color: #fff; }
-.descanso[data-passou="sim"] .pequeno, .descanso[data-passou="sim"] .descanso-rotulo { color: inherit; }
-.descanso[data-passou="sim"] .descanso-barra { display: none; }
-.descanso[data-passou="sim"] .botao { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.ilha-topo:active { transform: none; opacity: 1; }
+.ilha-anel { flex: none; width: 30px; height: 30px; transform: rotate(-90deg); }
+.ilha-anel circle { fill: none; stroke-width: 3; }
+.ilha-anel-fundo { stroke: rgba(255, 255, 255, 0.16); }
+.ilha-anel-cheio { stroke: var(--ilha-cor); stroke-linecap: round; stroke-dasharray: 1; transition: stroke-dashoffset 0.25s linear, stroke 0.3s; }
+.ilha-nome { flex: 1; min-width: 0; font-size: 0.82rem; font-weight: 650; color: var(--ilha-cor); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ilha-tempo { font-size: 1.32rem; font-weight: 750; letter-spacing: -0.01em; line-height: 1; color: #fff; transition: font-size 0.35s; }
+.ilha[data-aberta="sim"] .ilha-topo { padding: 12px 20px 4px 14px; }
+.ilha[data-aberta="sim"] .ilha-anel { width: 40px; height: 40px; }
+.ilha[data-aberta="sim"] .ilha-nome { font-size: 0.95rem; }
+.ilha[data-aberta="sim"] .ilha-tempo { font-size: 2.3rem; }
+.ilha[data-passou="sim"] .ilha-tempo { color: #ff6b61; }
+.ilha[data-pausado="sim"] .ilha-tempo { animation: ilha-pisca 1.6s ease-in-out infinite; }
+@keyframes ilha-pisca { 50% { opacity: 0.45; } }
+
+/* O corpo so aparece aberta: cresce para baixo, como a ilha. */
+.ilha-corpo {
+  display: grid; grid-template-rows: 0fr; opacity: 0; padding: 0 14px;
+  transition: grid-template-rows 0.42s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.25s, padding 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.ilha-dentro { min-height: 0; overflow: hidden; display: grid; gap: 10px; }
+.ilha[data-aberta="sim"] .ilha-corpo { grid-template-rows: 1fr; opacity: 1; padding: 0 14px 14px; }
+.ilha:not([data-aberta="sim"]) .ilha-corpo { visibility: hidden; }
+.ilha-texto { margin: 0; padding: 0 2px; font-size: 0.82rem; color: rgba(245, 247, 246, 0.7); }
+.ilha-botoes { display: grid; grid-template-columns: 1fr 1.6fr 1fr 1.2fr; gap: 6px; }
+.ilha-botao {
+  min-height: 44px; border-radius: 22px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 0.9rem; font-weight: 650;
+}
+.ilha-botao svg { width: 16px; height: 16px; }
+.ilha-pausa svg { stroke-width: 2.8; }
+.ilha-pausa[aria-pressed="true"] svg { fill: currentColor; }
+.ilha-pausa { background: color-mix(in srgb, var(--ilha-cor) 22%, transparent); color: var(--ilha-cor); }
+.ilha-pular { background: #fff; color: #000; }
+.ilha-voltar {
+  min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border-radius: 22px; background: var(--marca); color: #04140a; font-weight: 700;
+}
+.ilha-voltar svg { width: 18px; height: 18px; }
+.ilha-voltar[hidden] { display: none; }
+
+/* Dentro da serie: no fluxo, centrada, logo abaixo do topo. */
+.jogo-descanso { display: flex; justify-content: center; padding: 2px 12px 4px; width: 100%; }
+.jogo-descanso:empty { display: none; }
+.jogo-descanso .ilha { position: relative; left: auto; top: auto; translate: none; z-index: auto; }
 
 /* ---------- dieta ---------- */
 
@@ -590,9 +646,6 @@ dialog.jogo > .jogo-palco { position: relative; flex: 0 1 clamp(84px, 16dvh, 150
 .faisca { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: #39e27a; pointer-events: none; }
 .faisca:nth-of-type(odd) { background: #5bd4e4; }
 
-.jogo-descanso { padding: 4px 16px 0; width: 100%; box-sizing: border-box; max-width: 520px; margin: 0 auto; }
-.jogo-descanso:empty { display: none; }
-.jogo-descanso .descanso { position: relative; left: auto; bottom: auto; transform: none; width: 100%; animation: none; box-shadow: none; background: var(--cartao); }
 
 .jogo-corpo { display: grid; gap: 10px; width: 100%; box-sizing: border-box; max-width: 520px; margin: 0 auto; padding: 8px 16px calc(var(--base) + 16px); }
 .jogo-etapa { font-family: var(--numero); font-size: 1.7rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin: 0; font-variant-numeric: tabular-nums; }
@@ -673,6 +726,15 @@ dialog.jogo > .jogo-corpo[data-fase="contando"] { flex: 1 0 auto; grid-template-
 .jogo-corpo[data-fase="contando"] .jogo-como { max-width: 32ch; margin: -8px auto 0; line-height: 1.4; }
 
 .jogo-parar svg { fill: currentColor; }
+/* Pausar ao lado do Parar (16/11/2026, "nao tem pausa"). Pausado, o relogio fica laranja e pisca. */
+.jogo-controles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px; }
+.jogo-controles .jogo-feito { margin: 0; }
+.jogo-pausa { min-height: 56px; border-radius: 18px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--cartao-2); color: var(--texto); font-weight: 700; }
+.jogo-pausa svg { width: 20px; height: 20px; stroke-width: 2.8; }
+.jogo-pausa[aria-pressed="true"] { background: color-mix(in srgb, var(--laranja) 22%, transparent); color: var(--laranja); }
+.jogo-pausa[aria-pressed="true"] svg { fill: currentColor; }
+.jogo-corpo[data-pausado="sim"] .jogo-relogio { color: var(--laranja) !important; animation: ilha-pisca 1.6s ease-in-out infinite; }
+.jogo-corpo[data-pausado="sim"] .jogo-tempo .jogo-rotulo { color: var(--laranja); }
 /* Contando: a meta grande e o tipo da serie a mostra. */
 .jogo-alvo { display: grid; justify-items: center; gap: 0; margin-top: 2px; }
 .jogo-alvo b { font-family: var(--numero); font-size: 2.6rem; font-weight: 800; line-height: 1.05; color: var(--tinta); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -683,6 +745,9 @@ dialog.jogo > .jogo-corpo[data-fase="contando"] { flex: 1 0 auto; grid-template-
 .tipo-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 5px 11px; border-radius: 999px; background: var(--cartao-2); font-size: 0.84rem; font-weight: 650; color: var(--texto); }
 .tipo-chip.nota { background: color-mix(in srgb, var(--laranja) 16%, transparent); color: var(--laranja); }
 .tipo-chip small { font-size: 0.72rem; font-weight: 600; opacity: 0.8; }
+/* Execucao virou botao (16/11/2026): com video, o triangulo de tocar na frente. */
+button.tipo-chip { min-height: 32px; align-items: center; cursor: pointer; }
+.tipo-chip.execucao svg { width: 13px; height: 13px; fill: currentColor; stroke-width: 1.5; }
 .jogo-durou { margin: 0; text-align: center; font-size: 0.9rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
 .jogo-durou b { color: var(--texto); font-family: var(--numero); }
 

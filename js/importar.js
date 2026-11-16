@@ -303,6 +303,8 @@ export function paraPlano(revisados, planoAtual) {
           drops: metodo === 'drop' ? METODOS.drop.drops : 0,
           descansoS: x.descansoS !== null && x.descansoS >= 15 && x.descansoS <= 600 ? x.descansoS : null,
           nota: x.nota ?? '',
+          // o mesmo exercicio de antes leva o video da execucao junto (16/11/2026)
+          video: (id === x.usarId ? atuais.flatMap((a) => a.exercicios ?? []).find((e) => e.id === id)?.video : '') || '',
           aquecimento: x.aquecimento ?? [],
           aquecimentoModo: (x.aquecimento ?? []).length > 0 ? 'manual' : null,
           musculo: null,
