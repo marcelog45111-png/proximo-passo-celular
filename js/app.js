@@ -383,6 +383,7 @@ let assinaturaDaTela = null;
 
 function desenhar() {
   const faixaAntes = document.querySelector('.dias')?.scrollLeft ?? null;
+  const rolagemAntes = window.scrollY;
   movimento.novoDesenho();
   raiz.replaceChildren();
   if (app.sessao === null) { assinaturaDaTela = 'entrar'; raiz.append(telaEntrar()); movimento.telaDeEntrada(raiz.firstElementChild); return; }
@@ -403,6 +404,10 @@ function desenhar() {
   }
   const tela = app.aba === 'dieta' ? telaDieta() : app.aba === 'garry' ? telaGarry() : telaTreino();
   raiz.append(tela, abas());
+  // A tela e refeita do zero: enquanto ela esta vazia o navegador encosta a rolagem no topo (17/11/2026,
+  // "toda vez que eu clico para abrir um exercicio recolhido ele volta pro topo da pagina"). Devolve onde
+  // a pessoa estava antes de pintar. Trocar de aba continua indo para o topo (o clique da aba rola depois).
+  if (window.scrollY !== rolagemAntes) window.scrollTo(0, rolagemAntes);
   acertarBarra();
   atualizarPontoSync();
   // Entrada so ao trocar de aba ou de dia; marcar uma serie nao repete a tela inteira.
