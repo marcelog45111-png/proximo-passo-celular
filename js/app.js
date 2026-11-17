@@ -3,12 +3,16 @@
 
 import { codigoDeRecuperacao, criarCifra, deBase64, gerarSegredo, lerCodigoDeRecuperacao, paraBase64 } from './cifra.js';
 import { entrar, ErroNuvem, inscrever, Nuvem, PROJETO } from './nuvem.js';
-import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias } from './dados.js';
+import { definirConfig, diaDaSemana, diaLogico, escrever, estadoVazio, podar, Sincronizador, somarDias, VERSAO_DOS_DADOS } from './dados.js';
 import {
   completoNaSessao, FAIXA_PADRAO, INTENSIDADES_DO_CARDIO, resumoDoCardio, faixaDe, lerPlanoTreino, lerSessao, METODOS, NOMES_DOS_DIAS, novoId, planoDeHoje, quandoRelativo, regraDaCarga, relogio, DESCANSOS, treinoComAquecimento, MUSCULOS, grupoDoExercicio, analiseDoExercicio, seriesDeTrabalho, ajusteEntreSeries,
-  resultadoDoExercicio, roteiro, planilhaSemanal, resumoDaSemana, trajetoriaDoExercicio, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
+  gruposDeBiset, proximoNoBiset, passoDeCarga, progressao, resultadoDoExercicio, roteiro, planilhaSemanal, resumoDaSemana, trajetoriaDoExercicio, sessoesDoConfig, SIGLAS_DOS_DIAS, sugestao, textoDasSeries, treinoDoDia, ultimaVez, veredito, volume,
 } from './treino.js';
-import { PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, validarPerfil, validarPlano } from './gerado/nutricao.js';
+import { guardarAlimentos, lerAlimentosSalvos, macrosDoItem, MEDIDAS, necessidadeDiaria, PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, textoDaMedida, validarPerfil, validarPlano } from './gerado/nutricao.js';
+import {
+  ATIVIDADES, buscarAlimentos, descricaoDaEscolha, escolhaDoItem, escolhaDoSalvo, estimarComIa, itemDoPlano, lerAlimentoProprio, leituraDoPeso, linhaDoConsumo,
+  macrosDaEscolha, novaRefeicao, OBJETIVOS, passoDe, pesosDoPeriodo, prepararPlano, SEXOS, tendenciaDoPeso, totalDoPlanoDe,
+} from './dieta.js';
 import { abrirChave, configDaIa, conversar } from './garry.js';
 import * as movimento from './movimento.js';
 import { cargaReps, h, icone, numeroBr, selo } from './dom.js';
@@ -54,6 +58,13 @@ let dispositivo = guardado.ler('dispositivo');
 if (!dispositivo) {
   dispositivo = `iphone-${novoId()}`;
   guardado.gravar('dispositivo', dispositivo);
+}
+
+// Aparelho com dados de antes de uma versao nova dos dados: baixa tudo de novo uma vez (17/11/2026: os
+// alimentos salvos do PC so chegam assim). O que mudou aqui e ainda nao subiu fica em pendentes e vence.
+{
+  const salvo = guardado.ler('estado', null);
+  if (salvo && (salvo.versao ?? 1) < VERSAO_DOS_DADOS) guardado.gravar('estado', { ...salvo, versao: VERSAO_DOS_DADOS, cursor: 0 });
 }
 
 const app = {
@@ -584,7 +595,18 @@ function telaTreino() {
 
   // O exercicio da vez e o primeiro que falta.
   const atual = treino.exercicios.find((e) => !completoNaSessao(e, sessao))?.id ?? null;
-  treino.exercicios.forEach((ex, i) => tela.append(cartaoExercicio(ex, sessao, sessoes, dia, treino.id, i, ex.id === atual)));
+  // Bi-set (17/11/2026): os cartoes do grupo ficam ligados, com a etiqueta em cima do primeiro.
+  const grupos = gruposDeBiset(treino.exercicios);
+  const porId = new Map(treino.exercicios.map((e) => [e.id, e]));
+  treino.exercicios.forEach((ex, i) => {
+    const g = grupos.get(ex.id);
+    if (g && g.pos === 0) {
+      tela.append(h('p', { class: 'biset-rotulo' }, h('b', { texto: g.nome }), h('span', { texto: `${g.ids.map((id) => porId.get(id)?.nome).join(' + ')} · uma série de cada, sem descanso entre eles` })));
+    }
+    const cartao = cartaoExercicio(ex, sessao, sessoes, dia, treino.id, i, ex.id === atual);
+    if (g) cartao.classList.add('biset', g.pos === 0 ? 'biset-primeiro' : g.pos === g.ids.length - 1 ? 'biset-ultimo' : 'biset-meio');
+    tela.append(cartao);
+  });
 
   const cartao = cartaoDoCardio();
   if (cartao) tela.append(cartao);
@@ -830,6 +852,41 @@ const rotuloDoTirar = (ex) => (ex.metodo === 'myo' ? 'Tirar mini' : ex.metodo ==
  * uma serie por tela (jogo.js). Depois de feita, a serie mostra o que foi feito e a
  * marca contra a base: subiu a carga, subiu as repeticoes, igual ou abaixo.
  */
+/**
+ * A dica do anel: o pedaco debaixo do dedo (ou do mouse) acende e mostra a serie. O anel comeca no alto e
+ * anda no sentido do relogio, um pedaco por serie. Some 1,2 s depois de soltar.
+ */
+function ligarDicaDoAnel(caixa, dica, n, textoDe) {
+  let some = null;
+  const mostrar = (ev) => {
+    const r = caixa.getBoundingClientRect();
+    const dx = ev.clientX - (r.left + r.width / 2);
+    const dy = ev.clientY - (r.top + r.height / 2);
+    if (Math.hypot(dx, dy) < r.width * 0.22) { esconder(); return; }
+    const graus = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+    const k = Math.min(n - 1, Math.floor(graus / (360 / n)));
+    const texto = textoDe(k);
+    if (!texto) return;
+    clearTimeout(some);
+    dica.textContent = texto;
+    dica.dataset.visivel = 'sim';
+    caixa.querySelectorAll('.pedaco, .enche').forEach((c) => c.classList.remove('foco'));
+    caixa.querySelectorAll(`[data-k="${k}"]`).forEach((c) => c.classList.add('foco'));
+  };
+  const esconder = (atraso = 0) => {
+    clearTimeout(some);
+    some = setTimeout(() => {
+      delete dica.dataset.visivel;
+      caixa.querySelectorAll('.foco').forEach((c) => c.classList.remove('foco'));
+    }, atraso);
+  };
+  caixa.addEventListener('pointerdown', (ev) => { caixa.setPointerCapture?.(ev.pointerId); mostrar(ev); });
+  caixa.addEventListener('pointermove', (ev) => { if (ev.pointerType === 'mouse' || ev.buttons) mostrar(ev); });
+  caixa.addEventListener('pointerup', () => esconder(1200));
+  caixa.addEventListener('pointercancel', () => esconder(1200));
+  caixa.addEventListener('pointerleave', (ev) => { if (ev.pointerType === 'mouse') esconder(300); });
+}
+
 function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
   const ultima = ultimaVez(ex, sessoes, dia);
   const lista = sessao.exercicios[ex.id] ?? [];
@@ -901,59 +958,181 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
     h('span', { class: 'ex-num', 'aria-hidden': 'true', texto: String(indice + 1).padStart(2, '0') }),
     h('h3', { class: 'ex-nome' }, h('button', { class: 'ex-nome-botao', type: 'button', 'aria-expanded': 'true', 'aria-label': `${ex.nome}: recolher`, onclick: recolher }, ex.nome, icone('cima'))),
     h('span', { class: `chip${ex.faixa ? '' : ' padrao'}`, title: ex.faixa ? null : 'Faixa padrão: dá para mudar em Editar treino', texto: `${faixa.min}–${faixa.max} reps` })));
-  if (metodo) cartao.append(h('p', { class: 'ex-metodo' }, h('b', { texto: metodo.nome }), ` ${metodo.resumo}`));
-  if (ex.nota) cartao.append(h('p', { class: 'ex-nota', texto: ex.nota }));
-  // O video da execucao (o seu ou o da biblioteca), a um toque.
-  if (videoDoExercicio(ex, biblioteca)) cartao.append(h('button', { class: 'ex-video', type: 'button', onclick: () => abrirExecucao(ex.id) }, icone('comecar'), 'Ver a execução'));
-  cartao.append(h('p', { class: 'sugestao', 'data-tipo': plano.tipo }, plano.tipo === 'subir' ? icone('liberada') : null, h('span', { texto: plano.tipo === 'subir' ? `Carga liberada. ${plano.texto}` : plano.texto })));
+  // O cartao como placar (17/11/2026). Pedidos: "ta muito cheio de informacao eu fico maluco", depois
+  // "eu n disse pra voce acabar com tudo ... repaginada para que fique bem separado as coisas, e
+  // facilmente legivel", e por fim "ta horrivel ... use skills threejs-webgl, core-3d-animation,
+  // gsap-scrolltrigger e animation-components". Nada some; cada coisa ganha a sua forma:
+  //  - etiquetas: execucao, metodo, video;
+  //  - o placar: a carga de hoje em numero grande (CountUp) e o anel do quanto falta para a carga
+  //    subir (o anel que se desenha), com a frase do plano e quando foi o treino anterior embaixo;
+  //  - a leitura da evolucao numa faixa com a chance;
+  //  - o aquecimento em degraus (pilulas), com o porque;
+  //  - cada serie numa coluna: reps grandes, a carga, o treino anterior embaixo, o veredito quando feita.
+  // As pecas entram em cascata pelo GSAP (movimento.placarEntrou); a barra 3D do topo ja acende o
+  // exercicio da vez. Componentes React (Magic UI/React Bits) nao entram: o app nao usa React, so as ideias.
+  const temVideo = videoDoExercicio(ex, biblioteca) !== null;
+  const etiquetas = [
+    ex.nota ? h('span', { class: 'ex-etq nota' }, h('small', { texto: 'Execução' }), h('span', { texto: ex.nota })) : null,
+    metodo ? h('span', { class: 'ex-etq metodo' }, h('small', { texto: 'Método' }), h('span', { texto: metodo.nome })) : null,
+    temVideo ? h('button', { class: 'ex-etq video', type: 'button', onclick: () => abrirExecucao(ex.id) }, icone('comecar'), h('span', { texto: 'Ver execução' })) : null,
+  ].filter(Boolean);
+  if (etiquetas.length) cartao.append(h('div', { class: 'ex-etiquetas' }, etiquetas));
+  if (metodo) cartao.append(h('p', { class: 'ex-legenda', texto: metodo.resumo }));
 
-  if (ultima) cartao.append(h('p', { class: 'ex-linha', texto: `Treino anterior: ${quandoFoi(ultima)}` }));
+  // O placar: a carga de hoje em numero grande, a frase do plano e quando foi o treino anterior.
+  // O anel do quanto faltava saiu (17/11/2026, "o anel ele soma todas as reps e deixa extremamente
+  // confuso ... se tem isso [a frase] voce ta misturando mt as coisas"): a frase ja diz o que fazer.
+  const trabalho = plano.passos.map((p, i) => ({ p, i, f: lista[i] && lista[i].reps > 0 ? lista[i] : null })).filter((x) => x.p.t !== 'a');
+  const cargaHoje = trabalho.find((x) => !x.p.t)?.p.alvo.carga ?? 0;
+  const numeroCarga = h('b');
+  movimento.contar(numeroCarga, `placar-carga-${ex.id}`, cargaHoje, (v) => numeroBr(Math.round(v * 10) / 10));
+  // O anel volta com outro sentido (17/11/2026, "deixe o anel significando o progresso pra evoluir NO
+  // EXERCICIO"; antes ele somava as reps que faltavam e confundia). Um pedaco por serie de trabalho: acende
+  // quando a serie DE HOJE bate o topo da faixa (na piramide, a meta do degrau), que e o que faz a carga
+  // subir. Todos acesos = carga liberada para o proximo treino. Embaixo, quantas bateram no treino anterior.
+  // So as series que a regra conta: as do plano (serie a mais nao vira pedaco); no myo e no rest-pause, a
+  // ativacao/serie principal. 10, 10, 11 = 3/3: o anel nunca passa de cheio.
+  const deTrabalho = trabalho.filter((x) => !x.p.t).slice(0, ex.metodo === 'myo' || ex.metodo === 'restpause' ? 1 : ex.series);
+  const topoDe = (k) => (ex.metodo === 'piramide' ? deTrabalho[k]?.p.alvo.reps ?? faixa.max : faixa.max);
+  const noTopoHoje = deTrabalho.filter((x, k) => x.f && x.f.reps >= topoDe(k)).length;
+  const n = Math.max(1, deTrabalho.length);
+  const liberou = noTopoHoje >= n;
+  const cargaNova = Math.round((cargaHoje + passoDeCarga(cargaHoje)) * 10) / 10;
+  // Cada pedaco enche pelo quanto a serie de hoje chegou da meta (17/11/2026: "fez 9 de 10? O segmento
+  // fica apagado, exatamente como se tivesse feito 0"): 9 de 10 = 90% do pedaco, em laranja; 10 ou mais
+  // = cheio e verde (nunca passa de cheio); serie nao feita = vazio. Antes de comecar, tudo vazio.
+  // O desenho (17/11/2026, "bugou TUDO": nao dava para saber qual pedaco era qual serie e as pontas
+  // redondas invadiam o vizinho). Cada pedaco leva o numero da serie do lado de fora, as pontas sao retas e
+  // ha um espaco claro entre eles. O anel comeca no alto e anda no sentido do relogio: 1, 2, 3...
+  const centroXY = 48;
+  const raio = 30;
+  const volta = 2 * Math.PI * raio;
+  const fresta = n > 1 ? 6 : 0;
+  const pedaco = volta / n - fresta;
+  const fracDe = (x, k) => (x.f ? Math.min(1, x.f.reps / topoDe(k)) : 0);
+  const anelSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  anelSvg.setAttribute('viewBox', '0 0 96 96');
+  anelSvg.setAttribute('class', 'placar-anel-svg');
+  anelSvg.setAttribute('aria-hidden', 'true');
+  const pecas = deTrabalho.slice(0, n).map((x, k) => {
+    const inicio = -(k * volta) / n - fresta / 2;
+    const fr = fracDe(x, k);
+    const cheio = pedaco * fr;
+    // A cor diz o quanto chegou (17/11/2026: 'variando as cores, so q o verde e o completo').
+    const classe = !x.f ? 'vazio' : fr >= 1 ? 'aceso' : fr >= 0.8 ? 'perto' : fr >= 0.5 ? 'meio' : 'longe';
+    const meio = ((k + 0.5) / n) * 2 * Math.PI;
+    const lx = (centroXY + 42 * Math.sin(meio)).toFixed(1);
+    const ly = (centroXY - 42 * Math.cos(meio)).toFixed(1);
+    return {
+      arcos: `<circle class="pedaco" data-k="${k}" cx="${centroXY}" cy="${centroXY}" r="${raio}" stroke-dasharray="${pedaco} ${volta - pedaco}" stroke-dashoffset="${inicio}"/>${cheio > 0 ? `<circle class="enche ${classe}" data-k="${k}" cx="${centroXY}" cy="${centroXY}" r="${raio}" stroke-dasharray="${cheio} ${volta - cheio}" stroke-dashoffset="${inicio}"/>` : ''}`,
+      numero: `<text class="pedaco-n ${classe}" data-k="${k}" x="${lx}" y="${ly}">${k + 1}</text>`,
+    };
+  });
+  // Sem os numeros 1, 2, 3 em volta (17/11/2026, pedido): so os pedacos. A janela corta a margem que eles usavam.
+  anelSvg.setAttribute('viewBox', '12 12 72 72');
+  anelSvg.innerHTML = `<g transform="rotate(-90 ${centroXY} ${centroXY})">${pecas.map((p) => p.arcos).join('')}</g>`;
+  const centro = liberou
+    ? h('span', { class: 'placar-anel-centro liberada' }, icone('liberada'))
+    : h('span', { class: 'placar-anel-centro' }, h('b', {}, String(noTopoHoje), h('small', { class: 'de', texto: `/${n}` })));
+  // Uma frase so dizendo quanto falta (as quatro pecas soltas "0/3", "todas com 10", "-> 60 kg" e
+  // "antes: 1 de 3" nao diziam). A comparacao com a semana passada fica nos selos de cada coluna.
+  const alvoTexto = ex.metodo === 'piramide' ? 'a meta' : String(faixa.max);
+  const faltamSeries = n - noTopoHoje;
+  // Todas as series feitas que ficaram abaixo da meta, nao so a ultima (17/11/2026: o texto se contradizia).
+  const abaixo = deTrabalho.map((x, k) => ({ x, k })).filter(({ x, k }) => x.f && x.f.reps < topoDe(k));
+  const fazer = noTopoHoje === 0 && !deTrabalho.some((x) => x.f)
+    ? `Faça ${alvoTexto} nas ${n} séries`
+    : `Falta${faltamSeries > 1 ? 'm' : ''} ${faltamSeries} ${faltamSeries > 1 ? 'séries' : 'série'} com ${alvoTexto}`;
+  // Passar o dedo (ou o mouse) no anel mostra cada serie: '1a serie · 10 reps' (17/11/2026, pedido).
+  const dica = h('span', { class: 'anel-dica', role: 'status', 'aria-live': 'polite' });
+  const caixaDoAnel = h('div', { class: 'placar-anel-caixa' }, anelSvg, centro, dica);
+  ligarDicaDoAnel(caixaDoAnel, dica, n, (k) => {
+    const x = deTrabalho[k];
+    if (!x) return null;
+    const nome = `${k + 1}ª série`;
+    if (!x.f) return `${nome} · meta ${topoDe(k)}`;
+    return `${nome} · ${x.f.reps} ${x.f.reps === 1 ? 'rep' : 'reps'}${x.f.reps >= topoDe(k) ? ' ✓' : ` de ${topoDe(k)}`}`;
+  });
+  const anel = h('div', {
+    class: 'placar-anel', 'data-liberou': liberou ? 'sim' : null,
+    'aria-label': liberou ? `Todas as séries na meta: a carga sobe para ${kg(cargaNova)} no próximo treino` : `${noTopoHoje} de ${n} séries na meta. ${fazer} para a carga subir para ${kg(cargaNova)}`,
+  },
+  caixaDoAnel,
+  h('span', { class: 'placar-anel-texto' }, liberou
+    ? [h('b', { texto: 'Carga liberada' }), h('small', { texto: `próximo: ${kg(cargaNova)}` })]
+    : [h('span', { texto: fazer }), h('b', { texto: kg(cargaNova) }),
+      ...abaixo.map(({ x, k }) => h('small', { class: 'perto', texto: `${k + 1}ª série: faltou ${topoDe(k) - x.f.reps} ${topoDe(k) - x.f.reps === 1 ? 'rep' : 'reps'}` }))]));
+  cartao.append(h('div', { class: 'placar-ex', 'data-tipo': plano.tipo },
+    h('div', { class: 'placar-carga' },
+      h('span', { class: 'placar-rotulo', texto: plano.tipo === 'subir' ? 'Carga nova hoje' : 'Carga de hoje' }),
+      h('div', { class: 'placar-numero' }, numeroCarga, h('small', { texto: 'kg' })),
+      h('p', { class: 'placar-frase', texto: plano.texto }),
+      ultima ? h('p', { class: 'placar-quando', texto: `Treino anterior: ${quandoFoi(ultima)}` }) : null),
+    anel));
+
   // A leitura da evolucao: a chance de evoluir hoje e o que fazer (analiseDoExercicio).
   if (validas.length === 0 && analise.recomendacao.tipo !== 'subir') {
-    cartao.append(h('div', { class: 'ex-analise', 'data-tipo': analise.recomendacao.tipo },
-      analise.chance ? h('span', { class: 'chance', 'data-nivel': analise.chance.nivel, texto: `${CHANCE[analise.chance.nivel]} de evoluir hoje` }) : null,
+    cartao.append(h('div', { class: 'ex-leitura', 'data-tipo': analise.recomendacao.tipo },
+      analise.chance ? h('span', { class: 'chance', 'data-nivel': analise.chance.nivel, texto: CHANCE[analise.chance.nivel] }) : null,
       h('p', { texto: analise.recomendacao.texto })));
   }
-  // O porque do aquecimento de hoje (aquecimentoDoDia): frio, ja aquecido, ontem, dia cheio...
-  if (validas.length === 0 && ex.aquecerMotivo && !pulouAquecimento) {
-    cartao.append(h('p', { class: 'ex-aquecimento', 'data-modo': ex.aquecerModo }, h('b', { texto: 'Aquecimento' }), h('span', { texto: ex.aquecerMotivo })));
-  }
-  // Todas as series de uma vez: Serie | Anterior (o treino anterior) | Hoje (a meta, ou o que foi feito) | marca.
-  const series = h('div', { class: 'series', role: 'group', 'aria-label': `Séries de ${ex.nome}` },
-    h('div', { class: 'serie cabecalho', 'aria-hidden': 'true' },
-      h('span', { texto: 'Série' }), h('span', { texto: 'Anterior' }), h('span', { texto: 'Hoje' }), h('span')));
-  plano.passos.forEach((passo, i) => {
-    const f = lista[i] && lista[i].reps > 0 ? lista[i] : null;
-    if (passo.t === 'a') {
-      // O aquecimento aparece na tabela, apagado: nao tem treino anterior nem conta.
-      series.append(h('button', {
-        class: `serie aquecimento${f ? ' feita' : ''}`, 'data-chave': `${ex.id}|${i}`,
-        'aria-label': `${passo.rotulo}: ${f ? `feito ${kg(f.carga)} vezes ${f.reps}` : pulouAquecimento ? 'pulado' : `${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}`}`,
-        onclick: () => jogar(ex.id, i),
+
+  // O aquecimento em degraus.
+  const aquec = plano.passos.map((p, i) => ({ p, i, f: lista[i] && lista[i].reps > 0 ? lista[i] : null })).filter((x) => x.p.t === 'a');
+  if (aquec.length > 0) {
+    const pulado = (x) => !x.f && (pulouAquecimento || validas.length > 0);
+    cartao.append(h('div', { class: 'aquec-bloco' },
+      h('div', { class: 'bloco-topo' }, h('span', { class: 'bloco-titulo', texto: 'Aquecimento' }), h('span', { class: 'bloco-dica', texto: 'não conta na evolução' })),
+      h('div', { class: 'aquec-degraus' }, aquec.map((x, k) => h('button', {
+        class: `aquec-degrau${x.f ? ' feito' : pulado(x) ? ' pulado' : ''}`, type: 'button', 'data-chave': `${ex.id}|${x.i}`,
+        'aria-label': `${x.p.rotulo}: ${x.f ? `feito ${kg(x.f.carga)} vezes ${x.f.reps}` : pulado(x) ? 'pulado' : `${kg(x.p.alvo.carga)} vezes ${x.p.alvo.reps}`}`,
+        onclick: () => jogar(ex.id, x.i),
       },
-      h('span', { class: 'n', texto: passo.curto }),
-      h('span', { class: 'anterior', texto: 'aquec.' }),
-      h('span', { class: f ? 'hoje' : 'meta' }, f ? cargaReps(f.carga, f.reps, { empilhado: true }) : cargaReps(passo.alvo.carga, passo.alvo.reps, { empilhado: true })),
-      h('span', { class: 'selo vazio' }, h('span', { texto: f ? 'feito' : pulouAquecimento ? 'pulado' : 'leve' }))));
-      return;
-    }
+      h('span', { class: 'aquec-n', texto: x.f ? '✓' : String(k + 1) }),
+      h('span', { class: 'aquec-valor' }, h('b', { texto: `${numeroBr((x.f ?? x.p.alvo).carga)} kg` }), h('span', { texto: `× ${(x.f ?? x.p.alvo).reps}` }))))),
+      ex.aquecerMotivo && validas.length === 0 && !pulouAquecimento ? h('p', { class: 'bloco-legenda', texto: ex.aquecerMotivo }) : null));
+  }
+
+  // As series: uma coluna por serie que vale.
+  const comparacao = (cmp) => (cmp === null ? h('span', { class: 'col-antes', texto: '1ª vez' })
+    : cmp.tipo === 'igual' ? h('span', { class: 'col-vazio', 'aria-hidden': 'true' })
+      : cmp.tipo === 'nova' ? h('span', { class: 'col-antes', texto: '1ª vez' }) : selo(cmp));
+  const proxima = trabalho.find((x) => !x.f)?.i ?? -1;
+  const coluna = ({ p: passo, i, f }) => {
     const v = f ? veredito(f, passo.base) : null;
-    const base = passo.base ? cargaReps(passo.base.carga, passo.base.reps, { empilhado: true }) : '—';
-    const alvo = cargaReps(passo.alvo.carga, passo.alvo.reps, { empilhado: true });
-    series.append(h('button', {
-      class: `serie${f ? ' feita' : ''}`, 'data-chave': `${ex.id}|${i}`,
+    const mostra = f ?? passo.alvo;
+    const ehDrop = passo.t === 'd';
+    return h('button', {
+      class: `${ehDrop ? 'col-drop' : 'col-serie'}${f ? ' feita' : ''}${i === proxima ? ' proxima' : ''}`, type: 'button', 'data-chave': `${ex.id}|${i}`, 'data-tipo': v?.tipo ?? null,
       'aria-label': f
         ? `${passo.rotulo}: feito ${kg(f.carga)} vezes ${f.reps}, ${v.tipo === 'nova' ? 'primeiro registro' : v.tipo === 'igual' ? 'igual ao treino anterior' : v.texto}. Corrigir`
-        : `${passo.rotulo}: treino anterior ${passo.base ? `${kg(passo.base.carga)} vezes ${passo.base.reps}` : 'ainda não tem'}, meta ${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}. Fazer agora`,
+        : `${passo.rotulo}: meta ${kg(passo.alvo.carga)} vezes ${passo.alvo.reps}, treino anterior ${passo.base ? `${kg(passo.base.carga)} vezes ${passo.base.reps}` : 'ainda não tem'}. Fazer agora`,
       onclick: () => jogar(ex.id, i),
     },
-    f ? h('i', { class: 'serie-luz', 'aria-hidden': 'true' }) : null,
-    h('span', { class: 'n', texto: passo.curto }),
-    h('span', { class: 'anterior' }, base),
-    f ? h('span', { class: 'hoje' }, cargaReps(f.carga, f.reps, { empilhado: true })) : h('span', { class: 'meta' }, alvo),
-    f ? selo(v) : h('span', { class: 'selo vazio' }, h('span', { texto: 'meta' }))));
-  });
-  cartao.append(series);
+    h('span', { class: 'col-rotulo', texto: passo.tipo === 'serie' ? `Série ${passo.curto}` : passo.rotulo }),
+    h('span', { class: 'col-reps' }, h('b', { texto: String(mostra.reps) }), h('small', { texto: 'reps' })),
+    h('span', { class: 'col-carga', texto: `${numeroBr(mostra.carga)} kg` }),
+    // Contra a mesma serie do treino anterior, no selo de seta (17/11/2026: 'quero q deixe nessa estrutura,
+    // e quando manteve a rep deixa vazio e quando sobe aumenta'). Antes de fazer, compara a meta; depois, o
+    // que foi feito. Igual = vazio. Sem treino anterior: '1ª vez'.
+    // No drop (meia coluna) o selo e so o numero: '+1', '−2'. A cor diz se subiu ou caiu.
+    ehDrop ? comparacaoCurta(f ? v : passo.base ? veredito(passo.alvo, passo.base) : null) : comparacao(f ? v : passo.base ? veredito(passo.alvo, passo.base) : null));
+  };
+  const comparacaoCurta = (cmp) => (!cmp || cmp.tipo === 'igual' || cmp.tipo === 'nova' ? null
+    : h('span', { class: 'selo', 'data-tipo': cmp.tipo }, h('span', { texto: cmp.texto.replace(/ (reps?|kg)$/, '') })));
+  // Os drops sao meio quadrado colado na serie que tem o drop (17/11/2026: 'quando for drop quero que seja
+  // metade de um quadrado ligado a serie que tem drop'): a ultima serie e os drops viram um bloco so; com
+  // mais de um drop, eles se empilham nessa metade.
+  const series = trabalho.filter((x) => x.p.t !== 'd');
+  const drops = trabalho.filter((x) => x.p.t === 'd');
+  const blocos = series.map((x, k) => (k === series.length - 1 && drops.length > 0
+    ? h('div', { class: 'col-grupo', role: 'group', 'aria-label': `${x.p.rotulo} com ${drops.length} ${drops.length === 1 ? 'drop' : 'drops'}` },
+      coluna(x), h('div', { class: 'col-drops' }, drops.map(coluna)))
+    : coluna(x)));
+  cartao.append(h('div', { class: 'series-bloco' },
+    h('div', { class: 'bloco-topo' }, h('span', { class: 'bloco-titulo', texto: 'Séries' }), ultima ? h('span', { class: 'bloco-dica', texto: `comparado com ${quandoFoi(ultima)}` }) : null),
+    h('div', { class: 'colunas-series', role: 'group', 'aria-label': `Séries de ${ex.nome}` }, blocos)));
+  movimento.placarEntrou(cartao, ex.id);
 
   const falta = plano.passos.findIndex((p, i) => !(lista[i] && lista[i].reps > 0) && !(p.t === 'a' && (pulouAquecimento || validas.length > 0)));
   if (falta !== -1 && !(completo && validas.length >= serieDeTrabalho)) {
@@ -979,7 +1158,7 @@ function cartaoExercicio(ex, sessao, sessoes, dia, treinoId, indice, atual) {
       },
       texto: rotuloDoTirar(ex),
     }) : null,
-    completo || !atual ? h('button', { class: 'botao texto', onclick: recolher, texto: 'Recolher' }) : null,
+    // O 'Recolher' do fim do cartao saiu (17/11/2026, pedido); recolher continua tocando no nome.
     h('button', { class: 'botao texto', onclick: () => abrirHistorico(ex), texto: 'Histórico' })));
   return cartao;
 }
@@ -1015,6 +1194,20 @@ function partidaDe(exId, comecarEm) {
     descansar: (segundos, rotulo, texto) => comecarDescanso(segundos, rotulo, texto, { exId: ex.id, dia: app.diaTreino }),
     pararDescanso,
     verExecucao: () => abrirExecucao(ex.id),
+    // Bi-set (17/11/2026): depois de uma serie, para qual exercicio do grupo ir e se ha descanso antes.
+    // `aindaTemAqui`: se este exercicio ainda tem serie depois da que acabou (a do momento pode nao estar gravada).
+    grupoBiset: gruposDeBiset(treino.exercicios).get(ex.id) ?? null,
+    biset: (aindaTemAqui) => {
+      const grupo = gruposDeBiset(treino.exercicios).get(ex.id);
+      if (!grupo) return null;
+      const s = sessaoDe(hoje());
+      const porId = new Map(treino.exercicios.map((e) => [e.id, e]));
+      const r = proximoNoBiset(grupo, ex.id, (id) => (id === ex.id ? aindaTemAqui : !completoNaSessao(porId.get(id), s)));
+      if (!r || r.id === ex.id) return r ? { ...r, mesmo: true } : null;
+      // O descanso do grupo: o primeiro que tiver um definido no Editar treino.
+      const descansoS = grupo.ids.map((id) => porId.get(id)?.descansoS).find((v) => v) ?? null;
+      return { ...r, descansoS, partida: () => partidaDe(r.id, null), nome: porId.get(r.id)?.nome ?? '' };
+    },
     temVideo: () => videoDoExercicio(exercicioDoPlano(ex.id) ?? ex, biblioteca) !== null,
     cena: {
       montar: (host) => cenaDaBarra?.montarEm(host),
@@ -2177,6 +2370,7 @@ function abrirEditor(diaSemana) {
     const partes = [`${ex.series} ${(METODOS[ex.metodo]?.rotulo ?? 'Séries').toLowerCase()}`, `${f.min} a ${f.max} reps`];
     if (METODOS[ex.metodo]) partes.push(METODOS[ex.metodo].nome);
     if (ex.descansoS) partes.push(`descanso ${relogio(ex.descansoS)}`);
+    if (ex.biset) partes.push('bi-set com o próximo');
     if (ex.nota) partes.push(ex.nota);
     return partes.join(' · ');
   };
@@ -2296,6 +2490,9 @@ function abrirEditor(diaSemana) {
         c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') c.blur(); });
       }
       const escolher = (fazer) => { lerEx(); fazer(); redesenhar(); atualizarTopo(); };
+      // Bi-set com o proximo exercicio (17/11/2026). So existe se ha um proximo.
+      const proximoEx = treino.exercicios[i + 1] ?? null;
+      const bisetChips = proximoEx ? chips(`biset-${ex.id}`, 'Bi-set com o próximo', [['nao', 'Não'], ['sim', 'Sim']], ex.biset ? 'sim' : 'nao', (v) => escolher(() => { ex.biset = v === 'sim'; })) : null;
       const metodoChips = chips(`metodo-${ex.id}`, 'Método', [['', 'Normal'], ...Object.entries(METODOS).map(([id, m]) => [id, m.nome])], ex.metodo ?? '', (v) => escolher(() => {
         // Trocou o metodo: as series de antes eram outra coisa e nao servem de treino anterior (16/11/2026).
         // A carga de trabalho de ate agora fica como ponto de partida, sem repeticoes inventadas.
@@ -2367,6 +2564,8 @@ function abrirEditor(diaSemana) {
         secao('Método', metodoChips,
           h('p', { class: 'ed-explica', texto: METODOS[ex.metodo]?.resumo ?? 'Uma série de cada vez. Os outros métodos só se você quiser.' }),
           pDrops ? h('div', { class: 'ed-linha-num' }, h('span', { texto: 'Drops no fim' }), pDrops.el) : null),
+        bisetChips ? secao('Bi-set com o próximo', bisetChips,
+          h('p', { class: 'ed-explica', texto: ex.biset ? `Uma série deste e, sem descanso, uma de ${proximoEx.nome || 'o próximo'}. O descanso vem depois do par.` : `Junta com ${proximoEx.nome || 'o próximo exercício'}: vocês alternam série a série, sem descanso entre os dois.` })) : null,
         secao('Descanso entre as séries', descansoChips,
           h('p', { class: 'ed-explica', texto: ex.descansoS ? `Cronômetro de ${relogio(ex.descansoS)} depois de cada série.` : 'Sem cronômetro: você começa a próxima quando quiser.' })),
         secao('Aquecimento', aquecChips, degrausManuais, explicaAquec,
@@ -2395,7 +2594,7 @@ function abrirEditor(diaSemana) {
     lista,
     h('button', {
       class: 'botao cheio ed-novo', onclick: () => {
-        const novo = { id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, descansoS: null, nota: '', video: '', aquecimento: [], aquecimentoModo: null, musculo: null, referencia: null };
+        const novo = { id: novoId(), nome: '', faixa: null, series: 3, metodo: null, drops: 0, descansoS: null, nota: '', video: '', biset: false, aquecimento: [], aquecimentoModo: null, musculo: null, referencia: null };
         mudarLista(() => { treino.exercicios.push(novo); abertoId = novo.id; });
         atualizarTopo();
         const aberto = lista.querySelector('.ed-ex');
@@ -2532,11 +2731,27 @@ function lerJson(texto, padrao) {
   }
 }
 
+function planoDaConta() {
+  return validarPlano(lerJson(app.estado.config.planoAlimentar, null)) ?? PLANO_PADRAO;
+}
+function perfilDaConta() {
+  return app.estado.config.perfilNutricao ? validarPerfil(lerJson(app.estado.config.perfilNutricao, null)) : PERFIL_PADRAO;
+}
+function salvosDaConta() {
+  return lerAlimentosSalvos(app.estado.config.alimentosSalvos ?? null);
+}
+/** Guarda (no comeco da lista) alimentos novos, como o PC faz: o mesmo nome e quantidade troca o antigo. */
+function guardarSalvos(itens) {
+  const lista = guardarAlimentos(salvosDaConta(), itens, novoId);
+  mudar((e) => definirConfig(e, 'alimentosSalvos', JSON.stringify(lista)));
+  return lista;
+}
+
 function dietaDeHoje() {
   const dia = hoje();
   const e = app.estado;
-  const plano = validarPlano(lerJson(e.config.planoAlimentar, null)) ?? PLANO_PADRAO;
-  const perfil = e.config.perfilNutricao ? validarPerfil(lerJson(e.config.perfilNutricao, null)) : PERFIL_PADRAO;
+  const plano = planoDaConta();
+  const perfil = perfilDaConta();
   const pesos = Object.values(e.pesos).sort((a, b) => (a.dia_logico < b.dia_logico ? -1 : 1));
   const pesoKg = pesos.length > 0 ? pesos.at(-1).valor_kg : null;
   const marcados = Object.values(e.marcas).filter((m) => m.dia_logico === dia).map((m) => m.habito_id);
@@ -2549,10 +2764,13 @@ function dietaDeHoje() {
     plano, perfil, pesoKg, marcadosIds: marcados, puladasIds: puladas, extrasDoDia: extras,
     horaAgora: `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`,
   });
-  return { dia, resumo, pesoKg, pesos };
+  return { dia, resumo, pesoKg, pesos, plano, perfil };
 }
 
 const refeicaoAberta = new Set();
+// A proxima refeicao abre sozinha; fechar a mao fica fechado (antes ela nunca fechava).
+const refeicaoFechada = new Set();
+const dietaUi = { periodo: 30, pesoSel: null };
 
 function ligarDieta(tela) {
   const circulo = tela.querySelector('.anel .cheio');
@@ -2560,10 +2778,504 @@ function ligarDieta(tela) {
   const numero = tela.querySelector('[data-anel-numero]');
   if (numero) movimento.contar(numero, 'dieta-kcal', Number(numero.dataset.anelNumero), n0);
   for (const i of tela.querySelectorAll('[data-macro]')) movimento.barraCresce(i, `macro-${i.dataset.macro}`, Number(i.dataset.fracao));
+  const peso = tela.querySelector('[data-peso-numero]');
+  if (peso) movimento.contar(peso, 'peso-numero', Number(peso.dataset.pesoNumero), (v) => numeroBr(Math.round(v * 10) / 10));
+  movimento.pesoEntrou(tela.querySelector('.peso-grafico'), `${dietaUi.periodo}`);
+  for (const g of tela.querySelectorAll('.peso-cartao .ed-chips')) movimento.pilulaDosChips(g, g.dataset.chave);
 }
 
+// ---------- registrar o que comeu ----------
+
+/**
+ * Grava um alimento no dia. Numa refeicao (17/11/2026), como o PC faz no "somar": se ela ainda vale o plano,
+ * o plano vira registrado antes (senao o total cairia para so este alimento); a refeicao fica feita.
+ * `comPlano` falso = so isto (a pessoa comeu so este alimento nessa refeicao).
+ */
+function registrarComida({ descricao, macros, refeicao = null, comPlano = true }) {
+  const { dia, resumo } = dietaDeHoje();
+  const r = refeicao ? resumo.refeicoes.find((x) => x.habitoId === refeicao) : null;
+  mudar((e) => {
+    if (r) {
+      if (r.comido.length === 0 && comPlano) {
+        for (const i of r.itensComMacros) {
+          const id = novoId();
+          escrever(e, 'consumo_extra', [id], linhaDoConsumo({ id, dia, descricao: `${i.nome} · ${textoDaMedida(i.quantidade, i.unidade)}`, macros: i.calculado, refeicao }));
+        }
+      }
+      escrever(e, 'marcas_habito', [refeicao, dia], { habito_id: refeicao, dia_logico: dia, marcado_em: new Date().toISOString() });
+      escrever(e, 'refeicoes_puladas', [dia, refeicao], null);
+    }
+    const id = novoId();
+    escrever(e, 'consumo_extra', [id], linhaDoConsumo({ id, dia, descricao, macros, refeicao: r ? refeicao : null }));
+  });
+}
+
+/** Tira um alimento registrado; o ultimo de uma refeicao desmarca a refeicao (igual ao PC). */
+function tirarComida(c) {
+  mudar((e) => {
+    escrever(e, 'consumo_extra', [c.id], null);
+    const ref = c.refeicaoHabitoId;
+    if (ref && !Object.values(e.consumo).some((x) => x.dia === c.dia && x.refeicao_habito === ref)) escrever(e, 'marcas_habito', [ref, c.dia], null);
+  });
+}
+
+/** "Voltar ao plano": a refeicao deixa de ter registrado e volta a valer o plano (continua feita). */
+function voltarAoPlano(r, dia) {
+  mudar((e) => { for (const c of r.comido) escrever(e, 'consumo_extra', [c.id], null); });
+}
+
+/**
+ * Escolher um alimento (17/11/2026): busca na tabela e nos salvos (os do PC tambem), alimento proprio com a
+ * tabela nutricional e "Calcular com a IA". Depois de escolher: a quantidade, com os macros na hora.
+ * modo 'dia' grava no dia (com a refeicao); modo 'plano' devolve para o editor do plano.
+ */
+function escolherAlimento({ modo, refeicao = null, aoEscolher = null }) {
+  const { resumo } = modo === 'dia' ? dietaDeHoje() : { resumo: null };
+  const est = { busca: '', escolha: null, quantidade: 0, refeicao, comPlano: true, proprio: false, ia: { lendo: false, erro: '', achados: [] } };
+  const corpo = h('div', { class: 'ali' });
+  const d = folha(modo === 'plano' ? 'Alimento do plano' : 'Adicionar alimento', [corpo], {
+    acao: {
+      nome: 'Adicionar', fazer: () => {
+        if (est.proprio) return salvarProprio();
+        if (!est.escolha) { movimento.nega(corpo.querySelector('.ali-busca') ?? corpo); return false; }
+        const macros = macrosDaEscolha(est.escolha, est.quantidade);
+        if (est.escolha.origem === 'salvo') guardarSalvos([salvoDaEscolha(est.escolha)]); // sobe para o topo dos usados
+        if (modo === 'plano') { aoEscolher?.(est.escolha, est.quantidade); return true; }
+        registrarComida({ descricao: descricaoDaEscolha(est.escolha, est.quantidade), macros, refeicao: est.refeicao, comPlano: est.comPlano });
+        if (est.refeicao) refeicaoAberta.add(est.refeicao);
+        desenhar();
+        return true;
+      },
+    },
+  });
+  d.classList.add('folha-alimento');
+
+  const salvoDaEscolha = (e) => salvosDaConta().find((s) => s.id === e.id) ?? null;
+
+  // ---- a lista ----
+  const campo = h('input', { class: 'campo ali-busca', type: 'search', enterkeyhint: 'search', placeholder: 'Buscar: arroz, whey, pão…', autocomplete: 'off', 'aria-label': 'Buscar alimento' });
+  const lista = h('div', { class: 'ali-lista' });
+  const linha = (escolha) => h('button', {
+    class: 'ali-linha', type: 'button', onclick: () => escolher(escolha),
+  }, h('span', { class: 'ali-nome', texto: escolha.nome }),
+  h('span', { class: 'ali-sub', texto: `${escolha.origem === 'tabela' ? textoDaMedida(escolha.base, escolha.unidade) + (escolha.medida ? ` · ${escolha.medida}` : '') : escolha.medida ?? textoDaMedida(escolha.base, escolha.unidade)} · ${n0(escolha.macros.kcal)} kcal` }),
+  h('span', { class: 'ali-p', texto: `${numeroBr(escolha.macros.proteina)} g P` }));
+  const desenharLista = () => {
+    const { salvos, tabela } = buscarAlimentos(est.busca, salvosDaConta());
+    const ia = configDaIa(app.estado.config);
+    const blocos = [];
+    if (est.ia.achados.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: 'Calculado pela IA' }), est.ia.achados.map((s) => linha(escolhaDoSalvo(s))));
+    if (salvos.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: est.busca ? 'Seus alimentos' : 'Usados antes' }), salvos.map(linha));
+    if (tabela.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: 'Tabela' }), tabela.map(linha));
+    if (est.busca && salvos.length + tabela.length === 0 && est.ia.achados.length === 0) blocos.push(h('p', { class: 'discreto ali-nada', texto: `Nada com “${est.busca}” na tabela.` }));
+    if (est.busca.length >= 2 && ia?.cifrada) {
+      blocos.push(h('button', { class: 'ali-ia', type: 'button', disabled: est.ia.lendo, onclick: calcularComIa },
+        icone('ia'), h('span', { texto: est.ia.lendo ? 'Calculando…' : `Calcular “${est.busca}” com a IA` })));
+    }
+    if (est.ia.erro) blocos.push(h('p', { class: 'ali-erro', role: 'alert', texto: est.ia.erro }));
+    blocos.push(h('button', { class: 'ali-proprio', type: 'button', onclick: () => { est.proprio = true; desenharTudo(); } },
+      icone('mais'), h('span', { texto: 'Alimento próprio' }), h('small', { texto: 'você escreve a tabela nutricional' })));
+    lista.replaceChildren(...blocos.flat());
+  };
+  campo.addEventListener('input', () => { est.busca = campo.value; est.ia.erro = ''; desenharLista(); });
+
+  const calcularComIa = async () => {
+    const ia = configDaIa(app.estado.config);
+    if (!ia?.cifrada) return;
+    est.ia.lendo = true; est.ia.erro = ''; desenharLista();
+    try {
+      const chave = await abrirChave(ia.cifrada, app.cifra);
+      if (!chave) throw new Error('A chave da IA não abriu. Salve de novo em Ajustes > Garry (IA).');
+      const itens = await estimarComIa({ ...ia, chave }, est.busca);
+      const lista2 = guardarSalvos(itens);
+      est.ia.achados = itens.map((it) => lista2.find((s) => s.nome === it.nome) ?? null).filter(Boolean);
+      if (est.ia.achados.length === 1) escolher(escolhaDoSalvo(est.ia.achados[0]));
+    } catch (erro) {
+      est.ia.erro = erro.message;
+    } finally {
+      est.ia.lendo = false;
+      if (!est.escolha) desenharLista();
+    }
+  };
+
+  // ---- a quantidade ----
+  const escolher = (escolha) => {
+    est.escolha = escolha;
+    est.quantidade = escolha.base;
+    desenharTudo();
+  };
+  const painelEscolhido = () => {
+    const e = est.escolha;
+    const valor = h('input', { class: 'campo ed-passo-valor ali-qtd', inputmode: 'decimal', enterkeyhint: 'done', value: numeroBr(est.quantidade), 'aria-label': `Quantidade em ${e.unidade}` });
+    const kcal = h('b', { class: 'ali-kcal' });
+    const macros = h('div', { class: 'ali-macros' });
+    const atualizar = (pulo = 0) => {
+      const m = macrosDaEscolha(e, est.quantidade);
+      movimento.contar(kcal, 'ali-kcal', m.kcal, n0);
+      macros.replaceChildren(
+        ...[['Proteína', m.proteina, 'p'], ['Carbo', m.carboidrato, 'c'], ['Gordura', m.gordura, 'g']].map(([n, v, c]) => h('span', { class: `ali-macro m-${c}` }, h('b', { texto: `${numeroBr(v)} g` }), h('small', { texto: n }))));
+      if (pulo) movimento.numeroMudou(valor, pulo);
+    };
+    const mexer = (sinal) => {
+      const passo = passoDe(e.unidade, est.quantidade);
+      const novo = Math.max(passo, Math.round((est.quantidade + sinal * passo) / passo) * passo);
+      est.quantidade = Math.min(5000, Math.round(novo * 10) / 10);
+      valor.value = numeroBr(est.quantidade);
+      atualizar(sinal);
+    };
+    valor.addEventListener('focus', () => valor.select());
+    valor.addEventListener('input', () => {
+      const v = Number(valor.value.replace(',', '.'));
+      if (Number.isFinite(v) && v > 0 && v <= 5000) { est.quantidade = v; atualizar(); }
+    });
+    const blocos = [
+      h('div', { class: 'ali-escolhido-topo' },
+        h('div', {}, h('p', { class: 'ali-escolhido-nome', texto: e.nome }), h('p', { class: 'ali-sub', texto: `Base: ${[textoDaMedida(e.base, e.unidade), e.medida].filter((t, i, l) => t && l.indexOf(t) === i).join(' · ')}` })),
+        h('button', { class: 'botao texto', type: 'button', onclick: () => { est.escolha = null; desenharTudo(); campo.focus(); }, texto: 'Trocar' })),
+      h('div', { class: 'ali-quanto' },
+        h('div', { class: 'ed-passo ali-passo' },
+          h('button', { class: 'ed-passo-botao', type: 'button', 'aria-label': 'Menos', onclick: () => mexer(-1) }, icone('menos')),
+          h('div', { class: 'ali-passo-valor' }, valor, h('small', { texto: e.unidade === 'un' ? 'un' : e.unidade })),
+          h('button', { class: 'ed-passo-botao', type: 'button', 'aria-label': 'Mais', onclick: () => mexer(1) }, icone('mais'))),
+        h('div', { class: 'ali-total' }, kcal, h('small', { texto: 'kcal' }))),
+      macros,
+    ];
+    if (modo === 'dia') {
+      const opcoes = [[null, 'Fora do plano'], ...resumo.refeicoes.map((r) => [r.habitoId, r.titulo])];
+      const destino = pilulas('ali-destino', 'Onde entra', opcoes, est.refeicao, (v) => { est.refeicao = v; desenharJunto(); });
+      const junto = h('div', { class: 'ali-junto' });
+      const desenharJunto = () => {
+        const r = resumo.refeicoes.find((x) => x.habitoId === est.refeicao);
+        if (!r || r.comido.length > 0 || r.itens.length === 0) { junto.replaceChildren(); return; }
+        const p = pilulas('ali-junto', 'Com o plano', [[true, `${r.titulo} do plano + isto`], [false, 'Só isto']], est.comPlano, (v) => { est.comPlano = v; });
+        junto.replaceChildren(p.el, h('p', { class: 'cardio-dica', texto: est.comPlano ? `Conta ${n0(r.planejado.kcal)} kcal do plano mais este alimento.` : 'Conta só este alimento nessa refeição.' }));
+        requestAnimationFrame(() => movimento.pilulaDosChips(p.el, 'ali-junto'));
+      };
+      desenharJunto();
+      blocos.push(h('div', { class: 'ed-secao ali-onde' }, h('p', { class: 'ed-titulo', texto: 'Onde entra' }), destino.el, junto));
+      requestAnimationFrame(() => movimento.pilulaDosChips(destino.el, 'ali-destino'));
+    }
+    atualizar();
+    return h('div', { class: 'cartao ali-escolhido' }, blocos);
+  };
+
+  // ---- o alimento proprio ----
+  const proprio = { nome: '', quantidade: '100', unidade: 'g', kcal: '', proteina: '', carboidrato: '', gordura: '' };
+  const campos = {};
+  const salvarProprio = () => {
+    for (const [k, el] of Object.entries(campos)) proprio[k] = el.value;
+    const lido = lerAlimentoProprio(proprio);
+    if (lido.erro) { aviso.textContent = lido.erro; movimento.nega(campos[lido.campo] ?? campos.nome); return false; }
+    const lista2 = guardarSalvos([lido.item]);
+    const novo = lista2[0];
+    est.proprio = false;
+    escolher(escolhaDoSalvo(novo));
+    return false; // fica aberta: agora e escolher a quantidade
+  };
+  const aviso = h('p', { class: 'ali-erro', role: 'alert' });
+  const painelProprio = () => {
+    const c = (k, rotulo, extra = {}) => {
+      campos[k] = h('input', { class: 'campo', value: proprio[k], 'aria-label': rotulo, ...extra });
+      return h('label', { class: 'ali-campo' }, h('span', { texto: rotulo }), campos[k]);
+    };
+    const unidade = pilulas('ali-unidade', 'Unidade', [['g', 'g'], ['ml', 'ml'], ...MEDIDAS.map((m) => [m, m])], proprio.unidade, (v) => { proprio.unidade = v; });
+    requestAnimationFrame(() => movimento.pilulaDosChips(unidade.el, 'ali-unidade'));
+    return h('div', { class: 'cartao ali-escolhido ali-form' },
+      h('div', { class: 'ali-escolhido-topo' }, h('p', { class: 'ali-escolhido-nome', texto: 'Alimento próprio' }),
+        h('button', { class: 'botao texto', type: 'button', onclick: () => { est.proprio = false; desenharTudo(); }, texto: 'Voltar' })),
+      c('nome', 'Nome', { placeholder: 'Ex.: Tapioca com queijo', enterkeyhint: 'next' }),
+      h('div', { class: 'ed-secao ali-por' }, h('p', { class: 'ed-titulo', texto: 'A tabela nutricional vale por' }),
+        h('div', { class: 'ali-por-linha' }, c('quantidade', 'Quantidade', { inputmode: 'decimal' })), unidade.el),
+      h('div', { class: 'ali-grade' },
+        c('kcal', 'Calorias (kcal)', { inputmode: 'decimal' }), c('proteina', 'Proteína (g)', { inputmode: 'decimal' }),
+        c('carboidrato', 'Carboidrato (g)', { inputmode: 'decimal' }), c('gordura', 'Gordura (g)', { inputmode: 'decimal' })),
+      aviso,
+      h('button', { class: 'botao principal cheio', type: 'button', onclick: salvarProprio, texto: 'Salvar e escolher a quantidade' }),
+      h('p', { class: 'cardio-dica', texto: 'Fica salvo nos seus alimentos, aqui e no computador.' }));
+  };
+
+  const desenharTudo = () => {
+    if (est.proprio) corpo.replaceChildren(painelProprio());
+    else if (est.escolha) corpo.replaceChildren(painelEscolhido());
+    else { corpo.replaceChildren(campo, lista); desenharLista(); }
+    movimento.alimentoMudou(corpo);
+  };
+  desenharTudo();
+  setTimeout(() => { if (!est.escolha && !est.proprio) campo.focus(); }, 60);
+  return d;
+}
+
+// ---------- a meta: objetivo e dados para a conta ----------
+
+function abrirMetaDieta() {
+  const perfil = { ...perfilDaConta() };
+  const { pesoKg, plano } = dietaDeHoje();
+  const secao = (titulo, ...filhos) => h('div', { class: 'ed-secao' }, h('p', { class: 'ed-titulo', texto: titulo }), ...filhos);
+  const previa = h('div', { class: 'meta-previa', 'aria-live': 'polite' });
+  const desenharPrevia = () => {
+    const nec = necessidadeDiaria(perfil, pesoKg);
+    const doPlano = totalDoPlanoDe(plano);
+    if (!nec) {
+      previa.replaceChildren(h('p', { class: 'meta-falta', texto: pesoKg === null ? 'Registre o peso para calcular a sua meta.' : 'Preencha sexo, idade e altura para calcular.' }),
+        h('p', { class: 'cardio-dica', texto: plano.length > 0 ? `Sem isso, a meta do dia é o total do seu plano: ${n0(doPlano.kcal)} kcal.` : 'Sem isso, a meta do dia é o total do plano (monte o plano depois).' }));
+      return;
+    }
+    const b = h('b', { class: 'meta-kcal' });
+    previa.replaceChildren(h('div', { class: 'meta-linha' }, b, h('small', { texto: 'kcal por dia' })),
+      h('div', { class: 'meta-macros' }, ...[['Proteína', nec.proteina], ['Carbo', nec.carboidrato], ['Gordura', nec.gordura]].map(([n, v]) => h('span', {}, h('b', { texto: `${n0(v)} g` }), h('small', { texto: n })))),
+      h('p', { class: 'cardio-dica', texto: `Pela fórmula de Mifflin-St Jeor com ${kg(pesoKg)}${plano.length > 0 ? `. Seu plano soma ${n0(doPlano.kcal)} kcal` : ''}.` }));
+    movimento.contar(b, 'meta-kcal', nec.kcal, n0);
+  };
+  const num = (k, rotulo, sufixo, min, max) => {
+    const el = h('input', { class: 'campo', inputmode: 'numeric', value: perfil[k] ?? '', placeholder: '—', 'aria-label': rotulo });
+    el.addEventListener('input', () => { const v = Number(el.value); perfil[k] = Number.isFinite(v) && v >= min && v <= max ? Math.round(v) : null; desenharPrevia(); });
+    return h('label', { class: 'ali-campo' }, h('span', { texto: `${rotulo} (${sufixo})` }), el);
+  };
+  const objetivo = pilulas('meta-objetivo', 'Objetivo', OBJETIVOS.map(([v, n]) => [v, n.split(' ')[0]]), perfil.objetivo, (v) => { perfil.objetivo = v; desenharPrevia(); });
+  const sexo = pilulas('meta-sexo', 'Sexo', SEXOS, perfil.sexo, (v) => { perfil.sexo = v; desenharPrevia(); });
+  const atividade = pilulas('meta-atividade', 'Atividade', ATIVIDADES, perfil.atividade, (v) => { perfil.atividade = v; desenharPrevia(); });
+  const d = folha('Meta da dieta', [
+    h('div', { class: 'cartao cardio-folha' },
+      previa,
+      secao('Objetivo', objetivo.el),
+      secao('Você', sexo.el, h('div', { class: 'ali-grade' }, num('idade', 'Idade', 'anos', 12, 100), num('alturaCm', 'Altura', 'cm', 100, 250))),
+      secao('Atividade no dia', atividade.el, h('p', { class: 'cardio-dica', texto: 'Leve: pouco movimento. Moderada: treino 3 a 5 vezes. Alta: treino quase todo dia ou trabalho físico.' }))),
+  ], {
+    acao: {
+      nome: 'Salvar', fazer: () => {
+        mudar((e) => definirConfig(e, 'perfilNutricao', JSON.stringify(validarPerfil(perfil))));
+        desenhar();
+      },
+    },
+  });
+  d.classList.add('folha-meta');
+  desenharPrevia();
+  requestAnimationFrame(() => { for (const [g, k] of [[objetivo, 'meta-objetivo'], [sexo, 'meta-sexo'], [atividade, 'meta-atividade']]) movimento.pilulaDosChips(g.el, k); });
+  movimento.cardioAbriu(d);
+}
+
+// ---------- o plano: montar e mexer pelo iPhone ----------
+
+function abrirPlanoDieta() {
+  const rasc = structuredClone(planoDaConta());
+  const { perfil, pesoKg } = dietaDeHoje();
+  const corpo = h('div', { class: 'pl-editor' });
+  const d = folha('Meu plano', [corpo], {
+    acao: {
+      nome: 'Salvar', fazer: () => {
+        const pronto = prepararPlano(rasc);
+        if (pronto.erro) { erro.textContent = pronto.erro; erro.scrollIntoView({ block: 'center' }); return false; }
+        const texto = JSON.stringify(pronto.plano);
+        if (!validarPlano(JSON.parse(texto))) { erro.textContent = 'O plano ficou com algum item estranho. Confira as quantidades.'; return false; }
+        mudar((e) => definirConfig(e, 'planoAlimentar', texto));
+        desenhar();
+      },
+    },
+  });
+  d.classList.add('folha-plano');
+  const erro = h('p', { class: 'ali-erro', role: 'alert' });
+
+  const desenharEditor = () => {
+    const total = totalDoPlanoDe(rasc);
+    const nec = necessidadeDiaria(perfil, pesoKg);
+    const ordem = [...rasc].sort((a, b) => (a.hora < b.hora ? -1 : 1));
+    const topo = h('div', { class: 'cartao pl-total' },
+      h('div', { class: 'meta-linha' }, h('b', { class: 'meta-kcal', texto: n0(total.kcal) }), h('small', { texto: nec ? `de ${n0(nec.kcal)} kcal da meta` : 'kcal no dia' })),
+      h('div', { class: 'meta-macros' }, ...[['Proteína', total.proteina], ['Carbo', total.carboidrato], ['Gordura', total.gordura]].map(([n, v]) => h('span', {}, h('b', { texto: `${n0(v)} g` }), h('small', { texto: n })))));
+    const cartoes = ordem.map((r) => {
+      const hora = h('input', { class: 'campo pl-hora', type: 'time', value: r.hora, 'aria-label': `Hora de ${r.titulo}` });
+      hora.addEventListener('change', () => { if (/^\d\d:\d\d$/.test(hora.value)) { r.hora = hora.value; desenharEditor(); } });
+      const titulo = h('input', { class: 'campo pl-nome', value: r.titulo, 'aria-label': 'Nome da refeição', maxlength: '60' });
+      titulo.addEventListener('input', () => { r.titulo = titulo.value; });
+      const tot = totalDoPlanoDe([r]);
+      const itens = r.itens.map((item, k) => {
+        const escolha = escolhaDoItem(item);
+        const m = macrosDoItem(item);
+        const mexer = (sinal) => {
+          const passo = passoDe(item.unidade, item.quantidade);
+          const novo = Math.max(passo, Math.round((item.quantidade + sinal * passo) / passo) * passo);
+          r.itens[k] = itemDoPlano(escolha, Math.round(novo * 10) / 10, item.id);
+          desenharEditor();
+        };
+        return h('li', { class: 'pl-item' },
+          h('div', { class: 'pl-item-texto' }, h('span', { class: 'ali-nome', texto: item.nome }), h('span', { class: 'ali-sub', texto: `${n0(m.kcal)} kcal · ${numeroBr(m.proteina)} g P` })),
+          h('div', { class: 'pl-item-qtd' },
+            h('button', { class: 'pl-mini', type: 'button', 'aria-label': `Menos ${item.nome}`, onclick: () => mexer(-1) }, icone('menos')),
+            h('span', { class: 'pl-item-valor', texto: textoDaMedida(item.quantidade, item.unidade) }),
+            h('button', { class: 'pl-mini', type: 'button', 'aria-label': `Mais ${item.nome}`, onclick: () => mexer(1) }, icone('mais'))),
+          h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${item.nome}`, onclick: () => { r.itens.splice(k, 1); desenharEditor(); } }, icone('fechar')));
+      });
+      return h('section', { class: 'cartao pl-refeicao', 'data-ref': r.habitoId },
+        h('div', { class: 'pl-cabeca' }, hora, titulo,
+          h('button', {
+            class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${r.titulo}`, onclick: (ev) => {
+              const b = ev.currentTarget;
+              if (r.itens.length > 0 && b.dataset.certeza !== 'sim') { b.dataset.certeza = 'sim'; b.classList.add('certeza'); b.setAttribute('aria-label', `Tocar de novo para tirar ${r.titulo}`); return; }
+              rasc.splice(rasc.indexOf(r), 1);
+              desenharEditor();
+            },
+          }, icone('fechar'))),
+        h('ul', { class: 'pl-itens' }, itens),
+        h('div', { class: 'pl-rodape' },
+          h('button', {
+            class: 'botao texto', type: 'button', onclick: () => escolherAlimento({
+              modo: 'plano', aoEscolher: (escolha, q) => { r.itens.push(itemDoPlano(escolha, q, novoId())); desenharEditor(); },
+            }),
+          }, icone('mais'), ' Alimento'),
+          h('span', { class: 'pl-soma', texto: `${n0(tot.kcal)} kcal · ${n0(tot.proteina)} g P` })));
+    });
+    const nova = novaRefeicao(rasc);
+    corpo.replaceChildren(topo, ...cartoes,
+      nova ? h('button', { class: 'botao cheio pl-nova', type: 'button', onclick: () => { rasc.push(nova); desenharEditor(); } }, icone('mais'), ` ${nova.titulo}`) : h('p', { class: 'cardio-dica pl-cheio', texto: 'O plano tem as cinco refeições do dia.' }),
+      erro,
+      h('p', { class: 'cardio-dica', texto: 'O plano é o mesmo do computador: salvar aqui troca lá também.' }));
+  };
+  desenharEditor();
+  movimento.planoAbriu(d);
+}
+
+// ---------- o peso ----------
+
+const PERIODOS_PESO = [[7, '7 dias'], [30, '30 dias'], [90, '90 dias'], [null, 'Tudo']];
+
+/** O grafico do peso: linha, area, a reta da tendencia e um ponto por registro (tocar = escolher o dia). */
+function graficoDoPeso(pesos, tendencia, dia) {
+  const L = 340; const A = 150; const M = { e: 30, d: 12, t: 14, b: 22 };
+  const lista = pesosDoPeriodo(pesos, dietaUi.periodo, dia);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${L} ${A}`);
+  svg.setAttribute('class', 'peso-grafico');
+  svg.setAttribute('role', 'img');
+  if (lista.length === 0) {
+    svg.setAttribute('aria-label', 'Sem registros no período');
+    svg.innerHTML = `<text x="${L / 2}" y="${A / 2}" text-anchor="middle" class="peso-vazio">Sem registros neste período</text>`;
+    return svg;
+  }
+  const ms = (d) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10));
+  const x0 = dietaUi.periodo === null ? ms(lista[0].dia_logico) : ms(dia) - (dietaUi.periodo - 1) * 86_400_000;
+  const x1 = Math.max(ms(dia), ms(lista.at(-1).dia_logico));
+  const vs = lista.map((p) => p.valor_kg);
+  const min = Math.floor((Math.min(...vs) - 0.4) * 2) / 2;
+  const max = Math.ceil((Math.max(...vs) + 0.4) * 2) / 2;
+  const X = (d) => M.e + (x1 === x0 ? 0.5 : (ms(d) - x0) / (x1 - x0)) * (L - M.e - M.d);
+  const Y = (v) => M.t + (1 - (v - min) / (max - min)) * (A - M.t - M.b);
+  const pts = lista.map((p) => [X(p.dia_logico), Y(p.valor_kg)]);
+  const linha = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const area = `${linha} L${pts.at(-1)[0].toFixed(1)},${A - M.b} L${pts[0][0].toFixed(1)},${A - M.b} Z`;
+  const guias = [min, (min + max) / 2, max].map((v) => `<line class="peso-guia" x1="${M.e}" x2="${L - M.d}" y1="${Y(v)}" y2="${Y(v)}"/><text class="peso-eixo" x="${M.e - 6}" y="${Y(v) + 3.5}" text-anchor="end">${numeroBr(Math.round(v * 10) / 10)}</text>`).join('');
+  let reta = '';
+  if (tendencia) {
+    const xa = Math.max(x0, ms(tendencia.desde));
+    const ya = tendencia.inicio + tendencia.porDia * ((xa - ms(tendencia.desde)) / 86_400_000);
+    const yb = tendencia.inicio + tendencia.porDia * ((x1 - ms(tendencia.desde)) / 86_400_000);
+    const xa2 = M.e + (x1 === x0 ? 0.5 : (xa - x0) / (x1 - x0)) * (L - M.e - M.d);
+    reta = `<line class="peso-tendencia-reta" x1="${xa2.toFixed(1)}" y1="${Y(ya).toFixed(1)}" x2="${(L - M.d).toFixed(1)}" y2="${Y(yb).toFixed(1)}"/>`;
+  }
+  const rotulo = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  const eixoX = `<text class="peso-eixo" x="${M.e}" y="${A - 6}">${rotulo(new Date(x0).toISOString().slice(0, 10))}</text><text class="peso-eixo" x="${L - M.d}" y="${A - 6}" text-anchor="end">${rotulo(dia)}</text>`;
+  svg.innerHTML = `<defs><linearGradient id="peso-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5bd4e4" stop-opacity="0.32"/><stop offset="1" stop-color="#5bd4e4" stop-opacity="0"/></linearGradient>
+    <linearGradient id="peso-linha" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#39e27a"/><stop offset="1" stop-color="#5bd4e4"/></linearGradient></defs>
+    ${guias}${eixoX}<path class="peso-area" d="${area}"/>${reta}<path class="peso-linha" d="${linha}" pathLength="1"/>
+    ${lista.map((p, i) => `<g class="peso-ponto${p.dia_logico === dietaUi.pesoSel ? ' escolhido' : ''}" data-dia="${p.dia_logico}"><circle class="peso-alvo" cx="${pts[i][0]}" cy="${pts[i][1]}" r="14"/><circle class="peso-bola" cx="${pts[i][0]}" cy="${pts[i][1]}" r="${lista.length > 40 ? 2.4 : 3.6}"/></g>`).join('')}`;
+  svg.setAttribute('aria-label', `Peso de ${rotulo(lista[0].dia_logico)} a ${rotulo(lista.at(-1).dia_logico)}: de ${kg(lista[0].valor_kg)} a ${kg(lista.at(-1).valor_kg)}`);
+  // Arrastar o dedo mostra o dia mais perto; soltar escolhe.
+  const perto = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width) * L;
+    let melhor = 0;
+    pts.forEach(([px], i) => { if (Math.abs(px - x) < Math.abs(pts[melhor][0] - x)) melhor = i; });
+    return melhor;
+  };
+  const dica = (i) => {
+    svg.querySelectorAll('.peso-ponto').forEach((g, k) => g.classList.toggle('mira', k === i));
+    const caixa = svg.closest('.peso-cartao')?.querySelector('.peso-dica');
+    if (caixa) {
+      caixa.textContent = `${rotulo(lista[i].dia_logico)} · ${kg(lista[i].valor_kg)}`;
+      caixa.style.left = `${(pts[i][0] / L) * 100}%`;
+      caixa.style.top = `${(pts[i][1] / A) * 100}%`;
+      caixa.hidden = false;
+    }
+  };
+  svg.addEventListener('pointerdown', (ev) => { svg.setPointerCapture?.(ev.pointerId); dica(perto(ev)); });
+  svg.addEventListener('pointermove', (ev) => { if (ev.buttons || ev.pointerType === 'mouse') dica(perto(ev)); });
+  svg.addEventListener('pointerup', (ev) => {
+    const i = perto(ev);
+    dietaUi.pesoSel = dietaUi.pesoSel === lista[i].dia_logico ? null : lista[i].dia_logico;
+    desenhar();
+  });
+  svg.addEventListener('pointerleave', () => { const c = svg.closest('.peso-cartao')?.querySelector('.peso-dica'); if (c) c.hidden = true; });
+  return svg;
+}
+
+function cartaoPeso({ dia, pesos, perfil }) {
+  const ultimo = pesos.at(-1) ?? null;
+  const tendencia = tendenciaDoPeso(pesos, dia);
+  const sel = dietaUi.pesoSel ? app.estado.pesos[dietaUi.pesoSel] ?? null : null;
+  if (dietaUi.pesoSel && !sel) dietaUi.pesoSel = null;
+  const alvoDia = sel ? sel.dia_logico : dia;
+  const doAlvo = app.estado.pesos[alvoDia] ?? null;
+  let valor = doAlvo?.valor_kg ?? ultimo?.valor_kg ?? 70;
+
+  const campo = h('input', { class: 'campo ed-passo-valor peso-valor', inputmode: 'decimal', enterkeyhint: 'done', value: numeroBr(valor), 'aria-label': `Peso de ${alvoDia === dia ? 'hoje' : dataCurta(alvoDia)} em kg` });
+  campo.addEventListener('focus', () => campo.select());
+  campo.addEventListener('input', () => { const v = Number(campo.value.replace(',', '.')); if (Number.isFinite(v)) valor = v; });
+  const mexer = (d) => { valor = Math.round((valor + d) * 10) / 10; campo.value = numeroBr(valor); movimento.numeroMudou(campo, d); };
+  // segurar o - ou o + anda sozinho
+  const botao = (d, rot, ic) => {
+    let relogio = null;
+    const parar = () => { clearInterval(relogio); relogio = null; };
+    const b = h('button', { class: 'ed-passo-botao', type: 'button', 'aria-label': rot, onclick: (ev) => { if (ev.detail === 0) mexer(d); } }, icone(ic));
+    b.addEventListener('pointerdown', () => { mexer(d); parar(); let n = 0; relogio = setInterval(() => { n += 1; if (n > 3) mexer(d); }, 110); });
+    for (const t of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(t, parar);
+    return b;
+  };
+  const gravar = () => {
+    const v = Number(String(campo.value).replace(',', '.'));
+    if (!Number.isFinite(v) || v < 25 || v > 350) { movimento.nega(campo); return; }
+    mudar((e) => escrever(e, 'registros_peso', [alvoDia], { dia_logico: alvoDia, valor_kg: Math.round(v * 10) / 10, registrado_em: new Date().toISOString() }));
+    dietaUi.pesoSel = null;
+    desenhar();
+  };
+
+  const seta = tendencia === null ? null : Math.abs(tendencia.porSemana) < 0.05 ? 'igual' : tendencia.porSemana > 0 ? 'subir' : 'descer';
+  const periodo = pilulas('peso-periodo', 'Período do gráfico', PERIODOS_PESO, dietaUi.periodo, (v) => { dietaUi.periodo = v; desenhar(); });
+  periodo.el.dataset.chave = 'peso-periodo';
+  const anterior = pesos.filter((p) => p.dia_logico < (ultimo?.dia_logico ?? dia)).at(-1);
+  const delta = ultimo && anterior ? Math.round((ultimo.valor_kg - anterior.valor_kg) * 10) / 10 : null;
+
+  return h('section', { class: 'cartao peso-cartao' },
+    h('div', { class: 'peso-topo' },
+      h('div', { class: 'peso-numero' },
+        ultimo ? h('b', { 'data-peso-numero': String(ultimo.valor_kg) }) : h('b', { texto: '—' }), h('small', { texto: 'kg' }),
+        h('span', { class: 'peso-quando', texto: !ultimo ? 'nenhum registro ainda' : ultimo.dia_logico === dia ? 'hoje' : `em ${dataCurta(ultimo.dia_logico)}` })),
+      tendencia ? h('div', { class: `peso-tendencia${seta ? ` t-${seta}` : ''}` }, icone(seta),
+        h('b', { texto: `${tendencia.porSemana > 0 ? '+' : tendencia.porSemana < 0 ? '−' : ''}${numeroBr(Math.abs(tendencia.porSemana))}` }), h('small', { texto: 'kg/sem' }))
+        : delta !== null ? h('div', { class: 'peso-tendencia' }, h('b', { texto: `${delta > 0 ? '+' : delta < 0 ? '−' : ''}${numeroBr(Math.abs(delta))}` }), h('small', { texto: 'desde o anterior' })) : null),
+    h('p', { class: 'peso-leitura', texto: leituraDoPeso(tendencia, perfil.objetivo, ultimo?.valor_kg ?? null) }),
+    h('div', { class: 'peso-grafico-caixa' }, graficoDoPeso(pesos, tendencia, dia), h('div', { class: 'peso-dica', hidden: true })),
+    periodo.el,
+    h('div', { class: 'peso-registro' },
+      h('p', { class: 'ed-titulo', texto: sel ? `Corrigir ${dataCurta(alvoDia)}` : doAlvo ? 'Peso de hoje (registrado)' : 'Peso de hoje' }),
+      h('div', { class: 'peso-registro-linha' },
+        h('div', { class: 'ed-passo peso-passo' }, botao(-0.1, 'Menos 100 gramas', 'menos'), h('div', { class: 'ali-passo-valor' }, campo, h('small', { texto: 'kg' })), botao(0.1, 'Mais 100 gramas', 'mais')),
+        h('button', { class: 'botao principal peso-gravar', type: 'button', onclick: gravar }, doAlvo ? 'Corrigir' : 'Registrar')),
+      sel ? h('div', { class: 'peso-sel' },
+        h('button', { class: 'botao texto', type: 'button', onclick: () => { dietaUi.pesoSel = null; desenhar(); }, texto: 'Voltar para hoje' }),
+        h('button', {
+          class: 'botao texto perigo', type: 'button', onclick: (ev) => {
+            const b = ev.currentTarget;
+            if (b.dataset.certeza !== 'sim') { b.dataset.certeza = 'sim'; b.textContent = `Tocar de novo para apagar ${dataCurta(alvoDia)}`; return; }
+            mudar((e) => escrever(e, 'registros_peso', [alvoDia], null));
+            dietaUi.pesoSel = null;
+            desenhar();
+          }, texto: 'Apagar este dia',
+        })) : null));
+}
+
+// ---------- a tela ----------
+
 function telaDieta() {
-  const { dia, resumo, pesoKg, pesos } = dietaDeHoje();
+  const { dia, resumo, pesos, plano, perfil } = dietaDeHoje();
   const tela = h('main', { class: 'tela' }, cabeca('Dieta', dataPorExtenso(dia)));
 
   const raio = 58;
@@ -2581,79 +3293,85 @@ function telaDieta() {
       h('div', { class: 'trilho' }, h('i', { 'data-macro': id, 'data-fracao': String(f), style: `width:${f * 100}%;background:${cor}` })));
   };
   const faltam = Math.round(resumo.alvo.kcal - resumo.consumido.kcal);
+  const semMeta = resumo.alvo.kcal === 0;
   tela.append(h('section', { class: 'cartao dieta-resumo' },
+    h('button', { class: 'dieta-meta-botao', type: 'button', onclick: abrirMetaDieta, 'aria-label': 'Ajustar a meta da dieta' },
+      icone('ajustes'), h('span', { texto: semMeta ? 'Definir meta' : resumo.fonteAlvo === 'perfil' ? `Meta: ${OBJETIVOS.find(([v]) => v === perfil.objetivo)?.[1] ?? ''}` : 'Meta: o plano' })),
     h('div', { class: 'anel', role: 'img', 'aria-label': `${n0(resumo.consumido.kcal)} de ${n0(resumo.alvo.kcal)} kcal` }, svg,
       h('div', { class: 'anel-texto' },
         h('b', { 'data-anel-numero': String(Math.round(resumo.consumido.kcal)) }),
-        h('span', { texto: `de ${n0(resumo.alvo.kcal)} kcal` }),
-        h('span', { class: 'anel-falta', texto: faltam > 0 ? `faltam ${n0(faltam)}` : faltam < 0 ? `${n0(-faltam)} acima` : 'no alvo' }))),
+        h('span', { texto: semMeta ? 'kcal hoje' : `de ${n0(resumo.alvo.kcal)} kcal` }),
+        semMeta ? null : h('span', { class: 'anel-falta', texto: faltam > 0 ? `faltam ${n0(faltam)}` : faltam < 0 ? `${n0(-faltam)} acima` : 'no alvo' }))),
     h('div', { class: 'macros' },
       macro('p', 'Proteína', resumo.consumido.proteina, resumo.alvo.proteina, 'var(--tinta)'),
       macro('c', 'Carboidrato', resumo.consumido.carboidrato, resumo.alvo.carboidrato, 'var(--ciano)'),
-      macro('g', 'Gordura', resumo.consumido.gordura, resumo.alvo.gordura, 'var(--laranja)'))));
+      macro('g', 'Gordura', resumo.consumido.gordura, resumo.alvo.gordura, 'var(--laranja)')),
+    h('button', { class: 'botao principal cheio dieta-adicionar', type: 'button', onclick: () => escolherAlimento({ modo: 'dia', refeicao: null }) }, icone('mais'), ' Adicionar alimento')));
 
-  tela.append(h('h2', { class: 'secao', texto: 'Refeições do plano' }));
-  // Conta nova, sem o app do computador (11/11/2026): o plano da dieta ainda nao se monta pelo iPhone.
+  tela.append(h('div', { class: 'secao-linha' }, h('h2', { class: 'secao', texto: 'Refeições' }),
+    plano.length > 0 ? h('button', { class: 'botao texto secao-acao', type: 'button', onclick: abrirPlanoDieta }, icone('lapis'), ' Editar plano') : null));
   if (resumo.refeicoes.length === 0) {
-    tela.append(h('section', { class: 'cartao' },
-      h('p', { texto: 'Ainda não há plano de dieta aqui.' }),
-      h('p', { class: 'discreto', texto: 'Por enquanto o plano é montado no app do computador e chega sozinho. O peso, aqui embaixo, já funciona.' })));
+    tela.append(h('section', { class: 'cartao vazio dieta-vazia' },
+      h('p', { class: 'dieta-vazia-titulo', texto: 'Monte o seu plano' }),
+      h('p', { class: 'discreto', texto: 'Escolha as refeições do dia e o que vai em cada uma. Os alimentos vêm da tabela, dos seus salvos ou você escreve a tabela nutricional. O mesmo plano vale no computador.' }),
+      h('button', { class: 'botao principal cheio', type: 'button', onclick: abrirPlanoDieta }, icone('mais'), ' Montar plano')));
   }
   for (const r of resumo.refeicoes) {
-    const aberta = refeicaoAberta.has(r.habitoId) || r.proxima;
+    const aberta = refeicaoAberta.has(r.habitoId) || (r.proxima && !refeicaoFechada.has(r.habitoId));
     const estado = r.feita ? h('span', { class: 'ref-estado feita' }, icone('check'), 'Feita')
       : r.pulada ? h('span', { class: 'ref-estado pulada', texto: 'Pulei' })
         : r.proxima ? h('span', { class: 'ref-estado proxima', texto: 'Próxima' })
           : h('span', { class: 'ref-kcal', texto: `${n0(r.totais.kcal)} kcal` });
-    const cartao = h('section', { class: `cartao refeicao${r.feita ? ' feita' : ''}${r.pulada ? ' pulada' : ''}${r.proxima ? ' proxima-agora' : ''}` },
+    const cartao = h('section', { class: `cartao refeicao${r.feita ? ' feita' : ''}${r.pulada ? ' pulada' : ''}${r.proxima ? ' proxima-agora' : ''}`, 'data-ref': r.habitoId },
       h('button', {
         class: 'ref-topo', 'aria-expanded': String(aberta),
-        onclick: () => { if (refeicaoAberta.has(r.habitoId)) refeicaoAberta.delete(r.habitoId); else refeicaoAberta.add(r.habitoId); desenhar(); },
+        onclick: () => {
+          if (aberta) { refeicaoAberta.delete(r.habitoId); refeicaoFechada.add(r.habitoId); } else { refeicaoAberta.add(r.habitoId); refeicaoFechada.delete(r.habitoId); }
+          desenhar();
+        },
       }, h('span', { class: 'ref-hora', texto: r.hora }), h('span', { class: 'ref-titulo', texto: r.titulo }), estado));
     if (aberta) {
-      const itens = r.comido.length > 0
-        ? r.comido.map((c) => h('li', {}, h('span', { texto: c.descricao }), h('span', { texto: `${n0(c.kcal)} kcal` })))
-        : r.itensComMacros.map((i) => h('li', {}, h('span', { texto: `${i.nome} · ${String(i.quantidade).replace('.', ',')} ${i.unidade}` }), h('span', { texto: `${n0(i.calculado.kcal)} kcal` })));
+      const registrado = r.comido.length > 0;
+      const itens = registrado
+        ? r.comido.map((c) => h('li', { class: 'ref-registrado' }, h('span', { texto: c.descricao }), h('span', { texto: `${n0(c.kcal)} kcal` }),
+          h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${c.descricao}`, onclick: () => { tirarComida(c); desenhar(); } }, icone('fechar'))))
+        : r.itensComMacros.map((i) => h('li', {}, h('span', { texto: `${i.nome} · ${textoDaMedida(i.quantidade, i.unidade)}` }), h('span', { texto: `${n0(i.calculado.kcal)} kcal` })));
       cartao.append(h('ul', { class: 'ref-itens' }, itens,
-        h('li', {}, h('span', { texto: r.comido.length > 0 ? 'Registrado no computador' : 'Total' }), h('b', { texto: `${n0(r.totais.kcal)} kcal · ${n0(r.totais.proteina)} g P` }))));
+        h('li', { class: 'ref-total' }, h('span', { texto: registrado ? 'Registrado' : 'Total do plano' }), h('b', { texto: `${n0(r.totais.kcal)} kcal · ${n0(r.totais.proteina)} g P` }))));
       const marca = (comeu) => mudar((e) => {
         escrever(e, 'marcas_habito', [r.habitoId, dia], comeu ? { habito_id: r.habitoId, dia_logico: dia, marcado_em: new Date().toISOString() } : null);
       });
       const pula = (pulou) => mudar((e) => {
         escrever(e, 'refeicoes_puladas', [dia, r.habitoId], pulou ? { dia, habito_id: r.habitoId, em: new Date().toISOString() } : null);
       });
+      const mais = h('button', { class: 'botao', type: 'button', onclick: () => escolherAlimento({ modo: 'dia', refeicao: r.habitoId }) }, icone('mais'), ' Alimento');
       cartao.append(h('div', { class: 'ref-acoes' },
         r.feita
-          ? h('button', { class: 'botao', onclick: () => { marca(false); desenhar(); }, texto: 'Desfazer' })
+          ? [mais, registrado
+            ? h('button', { class: 'botao', onclick: () => { voltarAoPlano(r, dia); desenhar(); }, texto: 'Voltar ao plano' })
+            : h('button', { class: 'botao', onclick: () => { marca(false); desenhar(); }, texto: 'Desfazer' })]
           : r.pulada
             ? h('button', { class: 'botao', onclick: () => { pula(false); desenhar(); }, texto: 'Desfazer "Pulei"' })
-            : [h('button', { class: 'botao principal', onclick: () => { marca(true); refeicaoAberta.delete(r.habitoId); desenhar(); }, texto: 'Comi' }),
-              h('button', { class: 'botao', onclick: () => { pula(true); refeicaoAberta.delete(r.habitoId); desenhar(); }, texto: 'Pulei' })]));
+            : [h('button', { class: 'botao principal', onclick: () => { marca(true); refeicaoAberta.delete(r.habitoId); refeicaoFechada.add(r.habitoId); desenhar(); }, texto: 'Comi' }),
+              mais,
+              h('button', { class: 'botao', onclick: () => { pula(true); refeicaoAberta.delete(r.habitoId); refeicaoFechada.add(r.habitoId); desenhar(); }, texto: 'Pulei' })]));
     }
     tela.append(cartao);
   }
 
   if (resumo.extras.length > 0) {
     tela.append(h('h2', { class: 'secao', texto: 'Fora do plano' }), h('section', { class: 'cartao' },
-      h('ul', { class: 'lista-simples' }, resumo.extras.map((x) => h('li', {}, h('span', { texto: x.descricao }), h('span', { class: 'pequeno', texto: `${n0(x.kcal)} kcal` }))))));
+      h('ul', { class: 'lista-simples fora-do-plano' }, resumo.extras.map((x) => h('li', {},
+        h('span', { texto: x.descricao }), h('span', { class: 'pequeno', texto: `${n0(x.kcal)} kcal` }),
+        h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${x.descricao}`, onclick: () => { tirarComida(x); desenhar(); } }, icone('fechar')))))));
   }
 
-  tela.append(h('h2', { class: 'secao', texto: 'Para hoje' }), h('section', { class: 'cartao' },
-    h('ul', { class: 'lista-simples' }, resumo.dicas.map((d) => h('li', { texto: d })))));
+  if (resumo.refeicoes.length > 0) {
+    tela.append(h('h2', { class: 'secao', texto: 'Para hoje' }), h('section', { class: 'cartao' },
+      h('ul', { class: 'lista-simples' }, resumo.dicas.map((d) => h('li', { texto: d })))));
+  }
 
-  const pesoHoje = app.estado.pesos[dia];
-  const campoPeso = h('input', { class: 'campo', inputmode: 'decimal', placeholder: pesoKg ? String(pesoKg).replace('.', ',') : 'kg', value: pesoHoje ? String(pesoHoje.valor_kg).replace('.', ',') : '', 'aria-label': 'Peso de hoje em kg' });
-  const anterior = pesos.filter((p) => p.dia_logico < dia).at(-1);
-  tela.append(h('h2', { class: 'secao', texto: 'Peso' }), h('section', { class: 'cartao' },
-    h('p', { class: 'discreto', style: 'margin:0 0 10px', texto: pesoHoje ? `Hoje: ${kg(pesoHoje.valor_kg)}` : anterior ? `Último: ${kg(anterior.valor_kg)} em ${dataCurta(anterior.dia_logico)}` : 'Nenhum peso registrado ainda.' }),
-    h('div', { class: 'peso-linha' }, campoPeso, h('button', {
-      class: 'botao principal', onclick: () => {
-        const v = Number((campoPeso.value || campoPeso.placeholder).replace(',', '.'));
-        if (!Number.isFinite(v) || v < 25 || v > 350) { campoPeso.focus(); return; }
-        mudar((e) => escrever(e, 'registros_peso', [dia], { dia_logico: dia, valor_kg: Math.round(v * 10) / 10, registrado_em: new Date().toISOString() }));
-        desenhar();
-      }, texto: pesoHoje ? 'Corrigir' : 'Registrar',
-    }))));
+  tela.append(h('h2', { class: 'secao', texto: 'Peso' }), cartaoPeso({ dia, pesos, perfil }));
   return tela;
 }
 

@@ -7,15 +7,22 @@
 // o Sincronizador, no fim do arquivo.
 
 /** Configuracoes que o celular le ou grava. O resto do banco passa e e esquecido. */
-const CONFIGS = ['planoAlimentar', 'perfilNutricao', 'iaBaseUrl', 'iaModelo', 'treinoPlano', 'cardioMeta'];
+// alimentosSalvos entrou em 17/11/2026 (os alimentos que o PC e o iPhone ja calcularam ou escreveram).
+const CONFIGS = ['planoAlimentar', 'perfilNutricao', 'alimentosSalvos', 'iaBaseUrl', 'iaModelo', 'treinoPlano', 'cardioMeta'];
 const PREFIXOS = ['iaModelo:', 'iaChave:', 'treinoSessao:'];
 export const guardaConfig = (nome) => CONFIGS.includes(nome) || PREFIXOS.some((p) => nome.startsWith(p));
+
+/**
+ * Sobe quando o celular passa a guardar algo que antes jogava fora: o aparelho baixa tudo de novo uma vez
+ * (o que ja estava na nuvem, como os alimentos salvos do PC, so chega assim). 2 = alimentosSalvos.
+ */
+export const VERSAO_DOS_DADOS = 2;
 
 const TABELAS = new Set(['configuracoes', 'marcas_habito', 'refeicoes_puladas', 'consumo_extra', 'registros_peso']);
 const DIAS_GUARDADOS = 120;
 
 export function estadoVazio() {
-  return { cursor: 0, esquema: 0, config: {}, marcas: {}, puladas: {}, consumo: {}, pesos: {}, pendentes: {} };
+  return { versao: VERSAO_DOS_DADOS, cursor: 0, esquema: 0, config: {}, marcas: {}, puladas: {}, consumo: {}, pesos: {}, pendentes: {} };
 }
 
 /** Onde cada tabela mora no estado: [colecao, nome da entrada]. */

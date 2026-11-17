@@ -113,9 +113,28 @@ export function abrirJogo(partida, aoFechar) {
     o.pararDescanso();
   }
   /** O descanso entre esta serie e a proxima que falta (o do exercicio ou o do metodo). */
+  /**
+   * Bi-set (17/11/2026): depois desta serie, vai para outro exercicio do grupo? Nao no aquecimento nem no meio
+   * de um drop/mini (esses continuam aqui). -> o que o.biset devolve ({ volta, descansoS, partida }) ou null.
+   */
+  function bisetDepois(i, k) {
+    if (!o.biset) return null;
+    const passos = plano().passos;
+    if (passos[i]?.t === 'a') return null;
+    if (k !== -1 && ['a', 'd', 'm'].includes(passos[k]?.t)) return null;
+    const b = o.biset(k !== -1);
+    return b && !b.mesmo ? b : null;
+  }
   function descansarDepoisDe(i, agora = -1) {
     const passos = plano().passos;
     const k = pendenteDepoisDe(passos, o.feitas(), i + 1, agora);
+    const b = bisetDepois(i, k);
+    if (b) {
+      // Para o proximo do grupo: sem descanso. Fim da volta: o descanso do grupo.
+      if (!b.volta || !b.descansoS) o.pararDescanso();
+      else o.descansar(b.descansoS, 'Descanso', `Fim da volta do ${o.grupoBiset?.nome ?? 'bi-set'}`);
+      return;
+    }
     const pausa = intervaloAntes(k === -1 ? null : passos[k], o.ex);
     if (pausa.segundos) o.descansar(pausa.segundos, pausa.rotulo, pausa.texto); else o.pararDescanso();
   }
@@ -235,6 +254,11 @@ export function abrirJogo(partida, aoFechar) {
       // comecou no Parar desta serie, segue de onde esta (e se a pessoa pulou, continua pulado).
       if (!ja && descansoDaSerie !== i) descansarDepoisDe(i);
       descansoDaSerie = null;
+      // Bi-set: a proxima serie e a do outro exercicio do grupo (sem descanso) ou a da volta seguinte.
+      if (!ja) {
+        const b = bisetDepois(i, proximo);
+        if (b) { carregar(b.partida()); return; }
+      }
       if (proximo === -1) {
         mostrarFim();
         return;
@@ -444,8 +468,9 @@ export function abrirJogo(partida, aoFechar) {
     medida = null;
     num.textContent = String(o.indice + 1).padStart(2, '0');
     nome.textContent = o.ex.nome;
-    metodo.textContent = METODOS[o.ex.metodo]?.nome ?? '';
-    metodo.hidden = !METODOS[o.ex.metodo];
+    // No bi-set o chip do topo diz o grupo (e o metodo, se houver).
+    metodo.textContent = [o.grupoBiset?.nome, METODOS[o.ex.metodo]?.nome].filter(Boolean).join(' · ');
+    metodo.hidden = !metodo.textContent;
     d.setAttribute('aria-label', `${o.ex.nome}, série a série`);
     o.cena?.montar(cena);
     o.cena?.foco(o.ex.id);

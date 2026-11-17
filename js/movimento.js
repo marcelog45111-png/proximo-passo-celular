@@ -323,3 +323,65 @@ export function linhaAcesa(linha) {
   if (!pode() || !linha) return;
   g().fromTo(linha, { backgroundColor: 'rgba(57, 226, 122, 0.22)' }, { backgroundColor: 'rgba(57, 226, 122, 0.06)', duration: 1.4, delay: 0.35, ease: 'power2.out' });
 }
+
+/**
+ * O placar do exercicio entra em cascata (17/11/2026): a carga e o anel, depois a leitura, os degraus do
+ * aquecimento e as colunas das series subindo uma a uma. Uma vez por exercicio na sessao do app:
+ * marcar uma serie e redesenhar nao repete a entrada.
+ */
+const placaresVistos = new Set();
+export function placarEntrou(cartao, chave) {
+  if (!pode() || placaresVistos.has(chave)) return;
+  placaresVistos.add(chave);
+  noContexto(() => {
+    const tl = g().timeline({ defaults: { ease: 'power3.out', clearProps: 'transform,opacity,visibility' } });
+    const carga = cartao.querySelectorAll('.placar-carga > *');
+    const anel = cartao.querySelector('.placar-anel');
+    const leitura = cartao.querySelector('.ex-leitura');
+    const degraus = cartao.querySelectorAll('.aquec-degrau');
+    const colunas = cartao.querySelectorAll('.col-serie, .col-drop');
+    if (carga.length) tl.from(carga, { y: 12, autoAlpha: 0, duration: 0.45, stagger: 0.05 }, 0);
+    if (anel) tl.from(anel, { scale: 0.7, autoAlpha: 0, duration: 0.55, ease: 'back.out(1.6)' }, 0.08);
+    if (leitura) tl.from(leitura, { x: -14, autoAlpha: 0, duration: 0.4 }, 0.2);
+    if (degraus.length) tl.from(degraus, { y: 10, autoAlpha: 0, duration: 0.35, stagger: 0.06 }, 0.25);
+    if (colunas.length) tl.from(colunas, { y: 22, autoAlpha: 0, duration: 0.5, stagger: 0.07, ease: 'back.out(1.4)' }, 0.3);
+  });
+}
+
+// ---------- a dieta (17/11/2026) ----------
+
+/**
+ * O grafico do peso: a linha se desenha da esquerda para a direita, a area acende depois e os pontos
+ * estalam em fila. So na primeira vez de cada periodo: escolher um dia e redesenhar nao repete.
+ */
+const pesosVistos = new Set();
+export function pesoEntrou(svg, chave) {
+  if (!pode() || !svg || pesosVistos.has(chave)) return;
+  pesosVistos.add(chave);
+  const linha = svg.querySelector('.peso-linha');
+  const area = svg.querySelector('.peso-area');
+  const reta = svg.querySelector('.peso-tendencia-reta');
+  const bolas = svg.querySelectorAll('.peso-bola');
+  noContexto(() => {
+    if (linha) g().fromTo(linha, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 1.1, ease: 'power2.inOut' });
+    if (area) g().from(area, { autoAlpha: 0, duration: 0.7, delay: 0.6, ease: 'power1.out' });
+    if (reta) g().from(reta, { autoAlpha: 0, duration: 0.5, delay: 1, ease: 'power1.out' });
+    if (bolas.length > 0) g().from(bolas, { scale: 0, transformOrigin: '50% 50%', duration: 0.3, stagger: 0.9 / Math.max(1, bolas.length), ease: 'back.out(2.4)', clearProps: 'transform' });
+  });
+}
+
+/** A folha do alimento trocou de passo (lista, quantidade, alimento proprio): as pecas sobem em fila. */
+export function alimentoMudou(corpo) {
+  if (!pode() || !corpo) return;
+  const pecas = corpo.querySelectorAll(':scope > .cartao > *, :scope > .ali-busca, .ali-lista > *');
+  const alto = window.innerHeight;
+  const visiveis = [...pecas].filter((el) => el.getBoundingClientRect().top < alto).slice(0, 18);
+  if (visiveis.length > 0) g().from(visiveis, { y: 12, autoAlpha: 0, duration: 0.32, stagger: 0.025, ease: 'power3.out', clearProps: 'all' });
+}
+
+/** O editor do plano: o total e as refeicoes sobem em fila, os itens entram de lado. */
+export function planoAbriu(folha) {
+  if (!pode() || !folha) return;
+  g().from(folha.querySelectorAll('.pl-total, .pl-refeicao, .pl-nova'), { y: 18, autoAlpha: 0, duration: 0.42, stagger: 0.06, delay: 0.08, ease: 'power3.out', clearProps: 'all' });
+  g().from(folha.querySelectorAll('.pl-item'), { x: -10, autoAlpha: 0, duration: 0.3, stagger: 0.02, delay: 0.3, ease: 'power2.out', clearProps: 'all' });
+}

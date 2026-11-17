@@ -77,6 +77,9 @@ function lerExercicio(e) {
     // Desde quando o exercicio e feito deste jeito (16/11/2026): trocou o metodo ou a faixa, as series
     // de antes nao servem de treino anterior (eram outra coisa). null = vale tudo.
     desde: typeof e.desde === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.desde) ? e.desde : null,
+    // Bi-set (17/11/2026): feito junto com o PROXIMO exercicio do dia, sem descanso entre eles. Dois
+    // seguidos ligados = tri-set; mais = giant set (gruposDeBiset).
+    biset: e.biset === true,
   };
 }
 
@@ -296,6 +299,44 @@ export function progressao(exercicio, series) {
 }
 
 /** O exercicio esta fechado no dia: fez o roteiro inteiro, ou a pessoa encerrou antes (com algo feito). */
+/**
+ * Os grupos de bi-set do dia (17/11/2026): exercicios seguidos ligados pelo `biset` do anterior. Devolve
+ * um Map id -> { ids (na ordem), pos, nome } so para quem esta num grupo. 2 = Bi-set, 3 = Tri-set, 4+ = Giant set.
+ */
+export function gruposDeBiset(exercicios) {
+  const mapa = new Map();
+  let atual = [];
+  const fechar = () => {
+    if (atual.length >= 2) {
+      const ids = atual.map((e) => e.id);
+      const nome = ids.length === 2 ? 'Bi-set' : ids.length === 3 ? 'Tri-set' : 'Giant set';
+      atual.forEach((e, pos) => mapa.set(e.id, { ids, pos, nome }));
+    }
+    atual = [];
+  };
+  exercicios.forEach((e, i) => {
+    atual.push(e);
+    if (!(e.biset && i < exercicios.length - 1)) fechar();
+  });
+  fechar();
+  return mapa;
+}
+
+/**
+ * Para onde ir depois de uma serie dentro de um bi-set: o proximo do grupo (na ordem) que ainda tem serie,
+ * sem descanso; se nenhum depois dele tem, volta para o primeiro que tem (fim da volta: com descanso).
+ * `pendente(id)` diz se o exercicio ainda tem serie a fazer. null = nao esta num grupo ou nada falta.
+ * -> { id, volta } (volta = comeca a proxima volta, depois do descanso)
+ */
+export function proximoNoBiset(grupo, atualId, pendente) {
+  if (!grupo) return null;
+  const pos = grupo.ids.indexOf(atualId);
+  if (pos === -1) return null;
+  for (let k = pos + 1; k < grupo.ids.length; k += 1) if (pendente(grupo.ids[k])) return { id: grupo.ids[k], volta: false };
+  for (let k = 0; k <= pos; k += 1) if (pendente(grupo.ids[k])) return { id: grupo.ids[k], volta: true };
+  return null;
+}
+
 export function completoNaSessao(exercicio, sessao) {
   const n = feitas(sessao.exercicios[exercicio.id]).length;
   return n >= roteiro(exercicio).filter((p) => p.t !== 'a').length || (n > 0 && (sessao.encerrados ?? []).includes(exercicio.id));
@@ -368,7 +409,10 @@ export function planoDeHoje(exercicio, ultima, total = 0) {
       const meta = alvoDaPiramide(k);
       const fechou = base !== null && base.reps >= meta;
       const anotada = exercicio.referencia?.cargas?.[k] ?? null;
-      const carga = base ? (fechou ? arredondar(base.carga + passoDeCarga(base.carga)) : base.carga) : anotada ?? cargaDoDegrau;
+      // Degrau sem historico depois de outro: um passo acima do anterior (17/11/2026, revisao: antes ficavam
+      // todos na mesma carga, com o texto dizendo 'mais pesada que a anterior').
+      const subiDoAnterior = k > 0 && cargaDoDegrau > 0 ? arredondar(cargaDoDegrau + passoDeCarga(cargaDoDegrau)) : cargaDoDegrau;
+      const carga = base ? (fechou ? arredondar(base.carga + passoDeCarga(base.carga)) : base.carga) : anotada ?? subiDoAnterior;
       cargaDoDegrau = carga;
       const dica = base === null ? `Degrau de ${meta}: uma carga que dê ${meta}, mais pesada que a anterior.`
         : fechou ? `Fechou ${meta} com ${fmtKg(base.carga)}: este degrau sobe para ${fmtKg(carga)}.`
@@ -808,6 +852,13 @@ export function aquecimentoDoDia(exercicios, ctx = {}) {
 
 /** A carga de trabalho de hoje no exercicio (a mesma conta do planoDeHoje). */
 export function cargaDeTrabalhoDeHoje(exercicio, ultima) {
+  // Piramide (17/11/2026, revisao): a referencia do dia e o 1o degrau, o mais leve. Pela carga mais pesada,
+  // o ultimo degrau do aquecimento chegava na carga da Serie 1 (18 kg x 5 e depois 18 kg x 15).
+  if (exercicio.metodo === 'piramide') {
+    const primeiro = ultima ? feitas(ultima.series).filter((s) => !s.t)[0] ?? null : null;
+    if (primeiro) return primeiro.reps >= alvoDaPiramide(0) ? arredondar(primeiro.carga + passoDeCarga(primeiro.carga)) : primeiro.carga;
+    return exercicio.referencia?.cargas?.[0] ?? exercicio.referencia?.carga ?? 0;
+  }
   const p = ultima ? progressao(exercicio, ultima.series) : null;
   const carga = p === null ? null : p.sobe ? p.nova : p.carga;
   return carga ?? exercicio.referencia?.carga ?? 0;
@@ -965,8 +1016,9 @@ export function analiseDoExercicio(exercicio, sessoes, hoje) {
     chance = { nivel: 'alta', motivo: 'força subindo nas últimas semanas' };
   } else if (previsao) {
     recomendacao = { tipo: 'faltam', texto: previsao.treinos
-      ? `Faltam ${previsao.faltam} ${plural(previsao.faltam, 'rep', 'reps')} para subir para ${fmtKg(previsao.cargaNova)}: no seu ritmo, ~${previsao.treinos} ${plural(previsao.treinos, 'treino', 'treinos')}.`
-      : `Faltam ${previsao.faltam} ${plural(previsao.faltam, 'rep', 'reps')} para subir para ${fmtKg(previsao.cargaNova)}. Busque +1 rep onde ficou abaixo.` };
+      // A regra, nao a soma de reps que faltam (17/11/2026: 'soma todas as reps e deixa extremamente confuso').
+      ? `A carga sobe para ${fmtKg(previsao.cargaNova)} com ${regraDaCarga(exercicio)}: no seu ritmo, ~${previsao.treinos} ${plural(previsao.treinos, 'treino', 'treinos')}.`
+      : `A carga sobe para ${fmtKg(previsao.cargaNova)} com ${regraDaCarga(exercicio)}. Busque +1 rep onde ficou abaixo.` };
     chance = semRecorde === 0 ? { nivel: 'alta', motivo: 'o último treino foi recorde' } : { nivel: 'media', motivo: 'o último treino não passou o anterior' };
   } else {
     recomendacao = { tipo: 'manter', texto: 'Mantenha a carga e busque +1 rep onde ficou abaixo.' };
@@ -983,7 +1035,8 @@ export function analiseDoExercicio(exercicio, sessoes, hoje) {
  * { carga, texto } ou null.
  */
 export function ajusteEntreSeries(exercicio, serieFeita) {
-  if (!serieFeita || serieFeita.t || serieFeita.carga <= 0 || exercicio.metodo === 'piramide') return null;
+  // Piramide (cada degrau tem a sua carga) e FST-7 (mesma carga nas 7, 17/11/2026 revisao) nao ajustam no meio.
+  if (!serieFeita || serieFeita.t || serieFeita.carga <= 0 || exercicio.metodo === 'piramide' || exercicio.metodo === 'fst7') return null;
   const faixa = faixaDe(exercicio);
   const passo = passoDeCarga(serieFeita.carga);
   if (serieFeita.reps >= faixa.max + 3) {
