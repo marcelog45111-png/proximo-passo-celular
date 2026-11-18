@@ -10,8 +10,9 @@ import {
 } from './treino.js';
 import { guardarAlimentos, lerAlimentosSalvos, macrosDoItem, MEDIDAS, necessidadeDiaria, PLANO_PADRAO, PERFIL_PADRAO, resumoNutricional, textoDaMedida, validarPerfil, validarPlano } from './gerado/nutricao.js';
 import {
-  ATIVIDADES, buscarAlimentos, descricaoDaEscolha, escolhaDoItem, escolhaDoSalvo, estimarComIa, itemDoPlano, lerAlimentoProprio, leituraDoPeso, linhaDoConsumo,
-  macrosDaEscolha, novaRefeicao, OBJETIVOS, passoDe, pesosDoPeriodo, prepararPlano, SEXOS, tendenciaDoPeso, totalDoPlanoDe,
+  ATIVIDADES, buscarAlimentos, descricaoDaEscolha, escolhaDoItem, escolhaDoSalvo, estimarComIa, gravarItens, interpretarDieta, itemDoPlano, itemImportadoEm,
+  itensDaRefeicao, lerAlimentoProprio, leituraDoPeso, lerRotulo, linhaDoConsumo, macrosDaEscolha, macrosNaQuantidade, novaRefeicao, OBJETIVOS, passoDe,
+  pesosDoPeriodo, planoDaImportacao, prepararPlano, REFEICOES, SEXOS, tendenciaDoPeso, totalDoPlanoDe,
 } from './dieta.js';
 import { abrirChave, configDaIa, conversar } from './garry.js';
 import * as movimento from './movimento.js';
@@ -2801,7 +2802,9 @@ function registrarComida({ descricao, macros, refeicao = null, comPlano = true }
   const r = refeicao ? resumo.refeicoes.find((x) => x.habitoId === refeicao) : null;
   mudar((e) => {
     if (r) {
-      if (r.comido.length === 0 && comPlano) {
+      // Com a refeicao feita "como no plano", o plano vira registrado antes (senao o total cairia para so
+      // este alimento). Nao feita: entra so este; os alimentos do plano a pessoa marca um a um.
+      if (r.comido.length === 0 && r.feita && comPlano) {
         for (const i of r.itensComMacros) {
           const id = novoId();
           escrever(e, 'consumo_extra', [id], linhaDoConsumo({ id, dia, descricao: `${i.nome} · ${textoDaMedida(i.quantidade, i.unidade)}`, macros: i.calculado, refeicao }));
@@ -2824,10 +2827,6 @@ function tirarComida(c) {
   });
 }
 
-/** "Voltar ao plano": a refeicao deixa de ter registrado e volta a valer o plano (continua feita). */
-function voltarAoPlano(r, dia) {
-  mudar((e) => { for (const c of r.comido) escrever(e, 'consumo_extra', [c.id], null); });
-}
 
 /**
  * Escolher um alimento (17/11/2026): busca na tabela e nos salvos (os do PC tambem), alimento proprio com a
@@ -2866,20 +2865,25 @@ function escolherAlimento({ modo, refeicao = null, aoEscolher = null }) {
   h('span', { class: 'ali-sub', texto: `${escolha.origem === 'tabela' ? textoDaMedida(escolha.base, escolha.unidade) + (escolha.medida ? ` · ${escolha.medida}` : '') : escolha.medida ?? textoDaMedida(escolha.base, escolha.unidade)} · ${n0(escolha.macros.kcal)} kcal` }),
   h('span', { class: 'ali-p', texto: `${numeroBr(escolha.macros.proteina)} g P` }));
   const desenharLista = () => {
-    const { salvos, tabela } = buscarAlimentos(est.busca, salvosDaConta());
+    const { salvos, tabela, taco } = buscarAlimentos(est.busca, salvosDaConta());
     const ia = configDaIa(app.estado.config);
     const blocos = [];
+    // A IA vem antes da lista longa: e o caminho para o que nao esta em tabela nenhuma (marca, prato pronto).
+    if (est.busca.length >= 2 && ia?.cifrada) {
+      blocos.push(h('button', { class: 'ali-ia', type: 'button', disabled: est.ia.lendo, onclick: calcularComIa },
+        icone('ia'), h('span', { texto: est.ia.lendo ? 'Calculando…' : `Calcular “${est.busca}” com a IA` }), h('small', { texto: 'escreva a quantidade junto: “2 ovos fritos”, “150 g de frango”' })));
+    } else if (est.busca.length >= 2) {
+      blocos.push(h('button', { class: 'ali-ia ali-ia-sem', type: 'button', onclick: () => { d.close(); abrirAjustes(); } },
+        icone('ia'), h('span', { texto: 'Calcular com a IA' }), h('small', { texto: 'salve a chave do Garry em Ajustes (grátis)' })));
+    }
+    if (est.ia.erro) blocos.push(h('p', { class: 'ali-erro', role: 'alert', texto: est.ia.erro }));
     if (est.ia.achados.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: 'Calculado pela IA' }), est.ia.achados.map((s) => linha(escolhaDoSalvo(s))));
     if (salvos.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: est.busca ? 'Seus alimentos' : 'Usados antes' }), salvos.map(linha));
     if (tabela.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: 'Tabela' }), tabela.map(linha));
-    if (est.busca && salvos.length + tabela.length === 0 && est.ia.achados.length === 0) blocos.push(h('p', { class: 'discreto ali-nada', texto: `Nada com “${est.busca}” na tabela.` }));
-    if (est.busca.length >= 2 && ia?.cifrada) {
-      blocos.push(h('button', { class: 'ali-ia', type: 'button', disabled: est.ia.lendo, onclick: calcularComIa },
-        icone('ia'), h('span', { texto: est.ia.lendo ? 'Calculando…' : `Calcular “${est.busca}” com a IA` })));
-    }
-    if (est.ia.erro) blocos.push(h('p', { class: 'ali-erro', role: 'alert', texto: est.ia.erro }));
-    blocos.push(h('button', { class: 'ali-proprio', type: 'button', onclick: () => { est.proprio = true; desenharTudo(); } },
-      icone('mais'), h('span', { texto: 'Alimento próprio' }), h('small', { texto: 'você escreve a tabela nutricional' })));
+    if (taco.length > 0) blocos.push(h('p', { class: 'ed-titulo', texto: 'Tabela TACO · por 100 g' }), taco.map(linha));
+    if (est.busca && salvos.length + tabela.length + taco.length === 0 && est.ia.achados.length === 0) blocos.push(h('p', { class: 'discreto ali-nada', texto: `Nada com “${est.busca}” nas tabelas.` }));
+    blocos.push(h('button', { class: 'ali-proprio', type: 'button', onclick: () => { est.proprio = true; if (!proprio.nome) proprio.nome = est.busca.trim(); desenharTudo(); } },
+      icone('mais'), h('span', { texto: 'Alimento próprio' }), h('small', { texto: 'foto do rótulo, a IA ou você escreve' })));
     lista.replaceChildren(...blocos.flat());
   };
   campo.addEventListener('input', () => { est.busca = campo.value; est.ia.erro = ''; desenharLista(); });
@@ -2951,7 +2955,7 @@ function escolherAlimento({ modo, refeicao = null, aoEscolher = null }) {
       const junto = h('div', { class: 'ali-junto' });
       const desenharJunto = () => {
         const r = resumo.refeicoes.find((x) => x.habitoId === est.refeicao);
-        if (!r || r.comido.length > 0 || r.itens.length === 0) { junto.replaceChildren(); return; }
+        if (!r || !r.feita || r.comido.length > 0 || r.itens.length === 0) { junto.replaceChildren(); return; }
         const p = pilulas('ali-junto', 'Com o plano', [[true, `${r.titulo} do plano + isto`], [false, 'Só isto']], est.comPlano, (v) => { est.comPlano = v; });
         junto.replaceChildren(p.el, h('p', { class: 'cardio-dica', texto: est.comPlano ? `Conta ${n0(r.planejado.kcal)} kcal do plano mais este alimento.` : 'Conta só este alimento nessa refeição.' }));
         requestAnimationFrame(() => movimento.pilulaDosChips(p.el, 'ali-junto'));
@@ -2978,6 +2982,47 @@ function escolherAlimento({ modo, refeicao = null, aoEscolher = null }) {
     return false; // fica aberta: agora e escolher a quantidade
   };
   const aviso = h('p', { class: 'ali-erro', role: 'alert' });
+  // A IA preenche a tabela (17/11/2026: "tem que POR TUDO MACRO isso e TERRIVEL"): pela foto do rotulo
+  // ou pelo nome. A pessoa so confere e salva.
+  const iaProprio = { lendo: '', erro: '' };
+  const lerCampos = () => { for (const [k, el] of Object.entries(campos)) proprio[k] = el.value; };
+  const comIa = async (rotulo, fazer) => {
+    const ia = configDaIa(app.estado.config);
+    if (!ia?.cifrada) { iaProprio.erro = 'Para a IA preencher, salve a chave do Garry em Ajustes (grátis no openrouter.ai/keys).'; desenharTudo(); return; }
+    lerCampos();
+    iaProprio.lendo = rotulo; iaProprio.erro = '';
+    desenharTudo();
+    try {
+      const chave = await abrirChave(ia.cifrada, app.cifra);
+      if (!chave) throw new Error('A chave da IA não abriu. Salve de novo em Ajustes > Garry (IA).');
+      await fazer({ ...ia, chave });
+    } catch (e) {
+      iaProprio.erro = e.message;
+    } finally {
+      iaProprio.lendo = '';
+      if (d.open && est.proprio) desenharTudo();
+    }
+  };
+  const preencher = (v) => {
+    for (const k of ['nome', 'quantidade', 'kcal', 'proteina', 'carboidrato', 'gordura']) if (v[k] !== undefined && v[k] !== null) proprio[k] = k === 'nome' ? v[k] : numeroBr(v[k]);
+    if (v.unidade) proprio.unidade = v.unidade;
+    iaProprio.feito = true;
+  };
+  const lerFotoDoRotulo = (arquivo) => comIa('rotulo', async (ia) => {
+    const img = await prepararImagem(arquivo);
+    const r = await lerRotulo(ia, img.url);
+    preencher({ nome: proprio.nome.trim() || r.nome || '', quantidade: r.porcao, unidade: r.unidade, kcal: r.kcal, proteina: r.proteina, carboidrato: r.carboidrato, gordura: r.gordura });
+  });
+  const preencherPeloNome = () => comIa('nome', async (ia) => {
+    const nome = proprio.nome.trim();
+    if (!nome) throw new Error('Escreva o nome do alimento (e a marca, se tiver) para a IA calcular.');
+    const qtd = Number(String(proprio.quantidade).replace(',', '.'));
+    const pedido = Number.isFinite(qtd) && qtd > 0 ? `${nome}, ${textoDaMedida(qtd, proprio.unidade)}` : nome;
+    const [item] = await estimarComIa(ia, pedido);
+    if (!item) throw new Error('A IA não achou esse alimento. Escreva de outro jeito.');
+    const peso = item.peso ?? null;
+    preencher({ quantidade: peso ?? (Number.isFinite(qtd) && qtd > 0 ? qtd : 1), unidade: peso ? (item.unidade === 'ml' ? 'ml' : 'g') : proprio.unidade, kcal: item.kcal, proteina: item.proteina, carboidrato: item.carboidrato, gordura: item.gordura });
+  });
   const painelProprio = () => {
     const c = (k, rotulo, extra = {}) => {
       campos[k] = h('input', { class: 'campo', value: proprio[k], 'aria-label': rotulo, ...extra });
@@ -2985,9 +3030,19 @@ function escolherAlimento({ modo, refeicao = null, aoEscolher = null }) {
     };
     const unidade = pilulas('ali-unidade', 'Unidade', [['g', 'g'], ['ml', 'ml'], ...MEDIDAS.map((m) => [m, m])], proprio.unidade, (v) => { proprio.unidade = v; });
     requestAnimationFrame(() => movimento.pilulaDosChips(unidade.el, 'ali-unidade'));
+    const foto = h('input', { type: 'file', accept: 'image/*', class: 'imp-arquivo', 'aria-label': 'Tirar foto do rótulo', disabled: iaProprio.lendo ? true : null });
+    foto.addEventListener('change', () => { const a = foto.files?.[0]; if (a) lerFotoDoRotulo(a); });
+    const lendo = (qual, texto) => (iaProprio.lendo === qual ? h('span', { class: 'ali-ia-lendo' }, h('i', { class: 'imp-giro', 'aria-hidden': 'true' }), texto) : null);
     return h('div', { class: 'cartao ali-escolhido ali-form' },
       h('div', { class: 'ali-escolhido-topo' }, h('p', { class: 'ali-escolhido-nome', texto: 'Alimento próprio' }),
         h('button', { class: 'botao texto', type: 'button', onclick: () => { est.proprio = false; desenharTudo(); }, texto: 'Voltar' })),
+      h('div', { class: 'ali-ia-atalhos' },
+        h('label', { class: 'ali-ia-atalho', 'data-lendo': iaProprio.lendo === 'rotulo' ? 'sim' : null }, foto, icone('imagem'),
+          lendo('rotulo', 'Lendo o rótulo…') ?? h('span', {}, h('b', { texto: 'Foto do rótulo' }), h('small', { texto: 'a IA lê a tabela' }))),
+        h('button', { class: 'ali-ia-atalho', type: 'button', disabled: iaProprio.lendo ? true : null, onclick: preencherPeloNome, 'data-lendo': iaProprio.lendo === 'nome' ? 'sim' : null }, icone('ia'),
+          lendo('nome', 'Calculando…') ?? h('span', {}, h('b', { texto: 'Preencher com a IA' }), h('small', { texto: 'pelo nome e quantidade' })))),
+      iaProprio.erro ? h('p', { class: 'ali-erro', role: 'alert', texto: iaProprio.erro }) : null,
+      iaProprio.feito && !iaProprio.lendo && !iaProprio.erro ? h('p', { class: 'ali-ia-ok', role: 'status', texto: 'Preenchido. Confira os números e salve.' }) : null,
       c('nome', 'Nome', { placeholder: 'Ex.: Tapioca com queijo', enterkeyhint: 'next' }),
       h('div', { class: 'ed-secao ali-por' }, h('p', { class: 'ed-titulo', texto: 'A tabela nutricional vale por' }),
         h('div', { class: 'ali-por-linha' }, c('quantidade', 'Quantidade', { inputmode: 'decimal' })), unidade.el),
@@ -3130,7 +3185,9 @@ function abrirPlanoDieta() {
           h('span', { class: 'pl-soma', texto: `${n0(tot.kcal)} kcal · ${n0(tot.proteina)} g P` })));
     });
     const nova = novaRefeicao(rasc);
-    corpo.replaceChildren(topo, ...cartoes,
+    const importar = h('button', { class: 'ali-ia pl-importar', type: 'button', onclick: () => { d.close(); abrirImportarDieta(); } },
+      icone('ia'), h('span', { texto: 'Importar a dieta com IA' }), h('small', { texto: 'print, foto ou texto: a IA monta as refeições com os macros' }));
+    corpo.replaceChildren(topo, importar, ...cartoes,
       nova ? h('button', { class: 'botao cheio pl-nova', type: 'button', onclick: () => { rasc.push(nova); desenharEditor(); } }, icone('mais'), ` ${nova.titulo}`) : h('p', { class: 'cardio-dica pl-cheio', texto: 'O plano tem as cinco refeições do dia.' }),
       erro,
       h('p', { class: 'cardio-dica', texto: 'O plano é o mesmo do computador: salvar aqui troca lá também.' }));
@@ -3279,6 +3336,273 @@ function cartaoPeso({ dia, pesos, perfil }) {
 
 // ---------- a tela ----------
 
+// ---------- a refeicao alimento por alimento (17/11/2026) ----------
+// "nao tem opcao de se eu comi tal alimento ou nao, e so sim ou nao, HORRIVEL": cada alimento do plano
+// e um toque (comi / nao comi) com a quantidade de hoje; "Comi tudo" continua para o dia normal.
+
+let toqueNaRefeicao = null; // o alimento que acabou de mudar (anima so ele)
+
+/** Grava a refeicao como `itens` diz (comi/nao comi e quanto), no formato do PC. */
+function gravarRefeicao(r, dia, itens, extras) {
+  const g = gravarItens(itens, extras);
+  mudar((e) => {
+    for (const id of g.apagar) escrever(e, 'consumo_extra', [id], null);
+    for (const l of g.linhas) {
+      const id = l.id ?? novoId();
+      escrever(e, 'consumo_extra', [id], linhaDoConsumo({ id, dia, descricao: l.descricao, macros: l.macros, refeicao: r.habitoId }));
+    }
+    const jaMarcada = Object.values(e.marcas).some((m) => m.habito_id === r.habitoId && m.dia_logico === dia);
+    if (g.marcar && !jaMarcada) escrever(e, 'marcas_habito', [r.habitoId, dia], { habito_id: r.habitoId, dia_logico: dia, marcado_em: new Date().toISOString() });
+    if (!g.marcar && jaMarcada) escrever(e, 'marcas_habito', [r.habitoId, dia], null);
+    if (g.marcar && Object.values(e.puladas).some((p) => p.dia === dia && p.habito_id === r.habitoId)) escrever(e, 'refeicoes_puladas', [dia, r.habitoId], null);
+  });
+}
+
+function corpoDaRefeicao(r, dia) {
+  const { itens, extras } = itensDaRefeicao(r);
+  const aplicar = (novos, chave) => { toqueNaRefeicao = chave; gravarRefeicao(r, dia, novos, extras); refeicaoAberta.add(r.habitoId); refeicaoFechada.delete(r.habitoId); desenhar(); };
+  const comidos = itens.filter((x) => x.comeu);
+  const linhas = itens.map((x, k) => {
+    const chave = `${r.habitoId}:${x.item.id}`;
+    const m = macrosNaQuantidade(x.item, x.quantidade);
+    const alternar = () => aplicar(itens.map((y, j) => (j === k ? { ...y, comeu: !y.comeu, quantidade: y.comeu ? y.item.quantidade : y.quantidade } : y)), chave);
+    const mexer = (sinal) => {
+      const passo = passoDe(x.item.unidade, x.quantidade);
+      const novo = Math.round(Math.max(passo, Math.round((x.quantidade + sinal * passo) / passo) * passo) * 10) / 10;
+      aplicar(itens.map((y, j) => (j === k ? { ...y, quantidade: Math.min(5000, novo) } : y)), chave);
+    };
+    const mudou = x.comeu && Math.abs(x.quantidade - x.item.quantidade) > 1e-9;
+    const li = h('li', { class: 'ref-item', 'data-comeu': x.comeu ? 'sim' : 'nao', 'data-toque': toqueNaRefeicao === chave ? 'sim' : null },
+      h('button', { class: 'ref-item-toque', type: 'button', 'aria-pressed': String(x.comeu), 'aria-label': `Comi ${x.item.nome}`, onclick: alternar },
+        h('span', { class: 'ref-check', 'aria-hidden': 'true' }, icone('check')),
+        h('span', { class: 'ref-item-texto' },
+          h('span', { class: 'ref-item-nome', texto: x.item.nome }),
+          h('span', { class: 'ref-item-sub', texto: x.comeu
+            ? `${n0(m.kcal)} kcal · ${numeroBr(m.proteina)} g P`
+            : `${textoDaMedida(x.quantidade, x.item.unidade)} · ${n0(m.kcal)} kcal · ${numeroBr(m.proteina)} g P` }))),
+      x.comeu ? h('div', { class: 'ref-item-qtd' },
+        h('button', { class: 'pl-mini', type: 'button', 'aria-label': `Menos ${x.item.nome}`, onclick: () => mexer(-1) }, icone('menos')),
+        h('span', { class: 'ref-item-valor', 'data-mudou': mudou ? 'sim' : null, texto: textoDaMedida(x.quantidade, x.item.unidade) }),
+        h('button', { class: 'pl-mini', type: 'button', 'aria-label': `Mais ${x.item.nome}`, onclick: () => mexer(1) }, icone('mais'))) : null);
+    return li;
+  });
+  const extrasLi = extras.map((c) => h('li', { class: 'ref-item ref-item-extra', 'data-comeu': 'sim' },
+    h('span', { class: 'ref-item-toque ref-item-fixo' },
+      h('span', { class: 'ref-check ref-check-mais', 'aria-hidden': 'true' }, icone('mais')),
+      h('span', { class: 'ref-item-texto' }, h('span', { class: 'ref-item-nome', texto: quantidadeOuNome(c.descricao).nome }),
+        h('span', { class: 'ref-item-sub', texto: `${quantidadeOuNome(c.descricao).resto}${n0(c.kcal)} kcal · ${numeroBr(c.proteina)} g P · fora do plano` }))),
+    h('div', { class: 'ref-item-qtd' }, h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${c.descricao}`, onclick: () => { tirarComida(c); desenhar(); } }, icone('fechar')))));
+
+  const somaComida = r.feita ? r.totais : null;
+  const resumoTexto = r.pulada ? 'Você marcou que pulou.'
+    : r.feita ? `Comeu ${n0(somaComida.kcal)} de ${n0(r.planejado.kcal)} kcal · ${n0(somaComida.proteina)} g P`
+      : itens.length > 0 ? `Toque no que você comeu · plano ${n0(r.planejado.kcal)} kcal · ${n0(r.planejado.proteina)} g P` : 'Nada no plano desta refeição.';
+  const todos = itens.length > 0 && comidos.length === itens.length && itens.every((x) => Math.abs(x.quantidade - x.item.quantidade) < 1e-9);
+  const comiTudo = () => aplicar(itens.map((y) => ({ ...y, comeu: true, quantidade: y.item.quantidade })), `${r.habitoId}:tudo`);
+  const nadaComido = () => {
+    // Tudo sai: os alimentos do plano e os acrescentados; a refeicao volta a nao feita.
+    mudar((e) => {
+      for (const c of r.comido) escrever(e, 'consumo_extra', [c.id], null);
+      escrever(e, 'marcas_habito', [r.habitoId, dia], null);
+    });
+    desenhar();
+  };
+  const pula = (pulou) => {
+    mudar((e) => escrever(e, 'refeicoes_puladas', [dia, r.habitoId], pulou ? { dia, habito_id: r.habitoId, em: new Date().toISOString() } : null));
+    if (pulou) { refeicaoAberta.delete(r.habitoId); refeicaoFechada.add(r.habitoId); }
+    desenhar();
+  };
+  const mais = h('button', { class: 'botao', type: 'button', onclick: () => escolherAlimento({ modo: 'dia', refeicao: r.habitoId }) }, icone('mais'), ' Alimento');
+  const acoes = r.pulada
+    ? [h('button', { class: 'botao', type: 'button', onclick: () => pula(false), texto: 'Desfazer "Pulei"' })]
+    : r.feita
+      ? [todos ? null : h('button', { class: 'botao', type: 'button', onclick: comiTudo }, icone('check'), ' Comi tudo'), mais,
+        h('button', { class: 'botao', type: 'button', onclick: nadaComido, texto: 'Desmarcar' })]
+      : [itens.length > 0 ? h('button', { class: 'botao principal', type: 'button', onclick: comiTudo }, icone('check'), ' Comi tudo') : null, mais,
+        h('button', { class: 'botao', type: 'button', onclick: () => pula(true), texto: 'Pulei' })];
+  const corpo = [
+    h('p', { class: 'ref-resumo', role: 'status', texto: resumoTexto }),
+    h('ul', { class: 'ref-lista' }, linhas, extrasLi),
+    h('div', { class: 'ref-acoes' }, acoes.filter(Boolean)),
+  ];
+  if (toqueNaRefeicao?.startsWith(`${r.habitoId}:`)) toqueNaRefeicao = null;
+  return corpo;
+}
+
+/** "Pão de forma · 2 fatias" -> { nome: 'Pão de forma', resto: '2 fatias · ' }. */
+function quantidadeOuNome(descricao) {
+  const t = String(descricao);
+  const i = t.indexOf(' · ');
+  return i > 0 ? { nome: t.slice(0, i), resto: `${t.slice(i + 3)} · ` } : { nome: t, resto: '' };
+}
+
+// ---------- importar a dieta com IA (17/11/2026) ----------
+// "nao tem como importar com ia a minha dieta": print, foto ou texto -> a IA transcreve as refeicoes e
+// os alimentos com os macros -> revisar (quantidade, tirar, nome e hora) -> salvar como o plano.
+
+function abrirImportarDieta() {
+  const cfg = configDaIa(app.estado.config);
+  const est = { modo: 'imagem', imagens: [], texto: '', lendo: false, erro: '', revisao: null, certeza: false };
+  const corpo = h('div', { class: 'imp' });
+  const d = folha('Importar dieta com IA', [corpo]);
+  d.classList.add('folha-importar', 'folha-importar-dieta');
+
+  const adicionarArquivos = async (lista) => {
+    const arquivos = [...lista].filter((a) => a && a.size !== undefined);
+    if (arquivos.length === 0) return;
+    est.erro = '';
+    for (const a of arquivos) {
+      if (est.imagens.length >= LIMITES.imagens) { est.erro = `Até ${LIMITES.imagens} imagens de uma vez.`; break; }
+      try { est.imagens.push(await prepararImagem(a)); } catch (e) { est.erro = e.message; }
+    }
+    est.modo = 'imagem';
+    desenharImp();
+  };
+  d.addEventListener('paste', (ev) => {
+    if (est.revisao || est.lendo) return;
+    const arquivos = [...(ev.clipboardData?.items ?? [])].filter((i) => i.kind === 'file' && i.type.startsWith('image/')).map((i) => i.getAsFile());
+    if (arquivos.length === 0) return;
+    ev.preventDefault();
+    adicionarArquivos(arquivos);
+  });
+  d.addEventListener('dragover', (ev) => { if (!est.revisao && !est.lendo) { ev.preventDefault(); corpo.dataset.solta = 'sim'; } });
+  d.addEventListener('dragleave', () => { delete corpo.dataset.solta; });
+  d.addEventListener('drop', (ev) => {
+    delete corpo.dataset.solta;
+    if (est.revisao || est.lendo) return;
+    ev.preventDefault();
+    adicionarArquivos(ev.dataTransfer?.files ?? []);
+  });
+
+  async function interpretar() {
+    if (est.lendo) return;
+    const texto = est.modo === 'texto' ? est.texto.trim() : '';
+    const imagens = est.modo === 'imagem' ? est.imagens.map((i) => i.url) : [];
+    if (!texto && imagens.length === 0) { est.erro = est.modo === 'texto' ? 'Cole a dieta no campo.' : 'Escolha, arraste ou cole uma imagem da dieta.'; desenharImp(); return; }
+    est.erro = '';
+    est.lendo = true;
+    desenharImp();
+    try {
+      const chave = await abrirChave(cfg.cifrada, app.cifra);
+      if (!chave) throw new Error('A chave da IA não abriu. Salve de novo em Ajustes > Garry (IA).');
+      const lido = await interpretarDieta({ ...cfg, chave }, { texto, imagens });
+      est.revisao = lido;
+      est.certeza = false;
+    } catch (e) {
+      est.erro = e.message;
+    } finally {
+      est.lendo = false;
+      if (d.open) desenharImp();
+    }
+  }
+
+  function salvar(msg) {
+    const plano = planoDaImportacao(est.revisao.refeicoes, novoId);
+    if (plano.length === 0) { msg.textContent = 'Todas as refeições ficaram vazias.'; return; }
+    const pronto = prepararPlano(plano);
+    if (pronto.erro) { msg.textContent = pronto.erro; return; }
+    const texto = JSON.stringify(pronto.plano);
+    if (!validarPlano(JSON.parse(texto))) { msg.textContent = 'Algum alimento ficou com número estranho. Confira as quantidades.'; return; }
+    const atual = planoDaConta();
+    if (atual.length > 0 && !est.certeza) {
+      est.certeza = true;
+      msg.textContent = `Isso troca o seu plano atual (${n0(totalDoPlanoDe(atual).kcal)} kcal). Toque de novo para confirmar.`;
+      return;
+    }
+    // Os alimentos lidos ficam nos salvos: aparecem em "Usados antes" para registrar depois, sem macro na mao.
+    guardarSalvos(est.revisao.refeicoes.flatMap((r) => r.itens).slice(0, 60).map((i) => ({
+      nome: i.nome, quantidade: textoDaMedida(i.quantidade, i.unidade === 'un' ? 'unidade' : i.unidade), peso: i.quantidade, unidade: i.unidade === 'un' ? 'unidade' : i.unidade, ...i.macros,
+    })));
+    mudar((e) => definirConfig(e, 'planoAlimentar', texto));
+    document.querySelectorAll('dialog[open]').forEach((x) => x.close());
+    desenhar();
+  }
+
+  function desenharImp() {
+    if (!cfg?.cifrada) {
+      corpo.replaceChildren(h('div', { class: 'cartao' },
+        h('p', { texto: 'Para importar com IA, salve a chave do Garry.' }),
+        h('p', { class: 'discreto', texto: 'É a mesma chave que o Garry usa (grátis no openrouter.ai/keys). Fica cifrada na sua conta.' }),
+        h('button', { class: 'botao principal cheio', style: 'margin-top:12px', onclick: () => { d.close(); abrirAjustes(); }, texto: 'Abrir Ajustes' })));
+      return;
+    }
+    if (est.revisao) { corpo.replaceChildren(...revisaoDaDieta()); return; }
+    const modo = (m, rotulo) => h('button', { type: 'button', class: 'entrada-modo', 'aria-pressed': String(est.modo === m), disabled: est.lendo ? true : null, onclick: () => { est.modo = m; est.erro = ''; desenharImp(); } }, rotulo);
+    const partes = [h('div', { class: 'entrada-modos imp-modos', role: 'group', 'aria-label': 'Importar de' }, modo('imagem', 'Imagem'), modo('texto', 'Texto'))];
+    if (est.modo === 'imagem') {
+      const escolher = h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'imp-arquivo', 'aria-label': 'Escolher imagens da dieta' });
+      escolher.addEventListener('change', () => adicionarArquivos(escolher.files ?? []));
+      partes.push(
+        h('label', { class: 'imp-solta', 'data-vazia': est.imagens.length === 0 ? 'sim' : null }, escolher, icone('imagem'),
+          h('b', { texto: est.imagens.length === 0 ? 'Foto ou print da dieta' : 'Mais uma imagem' }),
+          h('span', { texto: 'a do nutricionista, um PDF fotografado, um print. Até 6.' })),
+        est.imagens.length > 0 ? h('div', { class: 'imp-fotos' }, est.imagens.map((img, i) => h('figure', { class: 'imp-foto' },
+          h('img', { src: img.url, alt: `Imagem ${i + 1}: ${img.nome}` }),
+          h('button', { class: 'imp-foto-tirar', type: 'button', 'aria-label': `Tirar a imagem ${i + 1}`, disabled: est.lendo ? true : null, onclick: () => { est.imagens.splice(i, 1); desenharImp(); } }, icone('fechar'))))) : null);
+    } else {
+      const campo = h('textarea', { class: 'campo imp-texto', rows: '10', placeholder: 'Cole aqui a dieta, do jeito que estiver. Ex.:\nCafé da manhã 07:30\n3 ovos mexidos\n2 fatias de pão integral\nAlmoço\n150 g de arroz, 120 g de frango grelhado, feijão', 'aria-label': 'Texto da dieta' });
+      campo.value = est.texto;
+      campo.addEventListener('input', () => { est.texto = campo.value; });
+      partes.push(campo);
+    }
+    partes.push(h('p', { class: 'erro', role: 'alert', texto: est.erro }));
+    partes.push(est.lendo
+      ? h('div', { class: 'imp-lendo', role: 'status' }, h('i', { class: 'imp-giro', 'aria-hidden': 'true' }), h('span', { texto: 'Lendo a dieta e calculando os macros… pode levar até um minuto.' }))
+      : h('button', { class: 'botao principal cheio', onclick: interpretar }, icone('ia'), 'Ler a dieta'));
+    partes.push(h('p', { class: 'pequeno imp-rodape', texto: 'A IA transcreve o que estiver escrito e calcula os macros pela TACO. Nada é salvo antes de você revisar.' }));
+    corpo.replaceChildren(...partes.filter(Boolean));
+  }
+
+  function revisaoDaDieta() {
+    const rev = est.revisao;
+    const msg = h('p', { class: 'erro', role: 'alert' });
+    const total = totalDoPlanoDe(planoDaImportacao(rev.refeicoes, () => 'x'));
+    const nItens = rev.refeicoes.reduce((n, r) => n + r.itens.length, 0);
+    const cartoes = rev.refeicoes.map((r, iR) => {
+      const soma = r.itens.reduce((t, i) => ({ kcal: t.kcal + i.macros.kcal, proteina: t.proteina + i.macros.proteina }), { kcal: 0, proteina: 0 });
+      const hora = h('input', { class: 'campo pl-hora', type: 'time', value: r.hora, 'aria-label': `Hora de ${r.titulo}` });
+      hora.addEventListener('change', () => { if (/^\d\d:\d\d$/.test(hora.value)) { r.hora = hora.value; } });
+      const titulo = h('input', { class: 'campo pl-nome', value: r.titulo, maxlength: '60', 'aria-label': 'Nome da refeição' });
+      titulo.addEventListener('input', () => { r.titulo = titulo.value; });
+      const slot = REFEICOES.find((x) => x.habitoId === r.habitoId);
+      return h('section', { class: 'cartao pl-refeicao imp-refeicao' },
+        h('div', { class: 'pl-cabeca' }, hora, titulo,
+          h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${r.titulo}`, onclick: () => { rev.refeicoes.splice(iR, 1); desenharImp(); } }, icone('fechar'))),
+        h('p', { class: 'imp-nota-dia', texto: `No computador conta como ${slot.titulo}${r.juntou.length ? `. Juntei aqui: ${r.juntou.join(', ')}` : ''}.` }),
+        h('ul', { class: 'pl-itens' }, r.itens.map((i, k) => {
+          const mexer = (sinal) => {
+            const passo = passoDe(i.unidade, i.quantidade);
+            const novo = Math.round(Math.max(passo, Math.round((i.quantidade + sinal * passo) / passo) * passo) * 10) / 10;
+            r.itens[k] = itemImportadoEm(i, Math.min(5000, novo));
+            desenharImp();
+          };
+          return h('li', { class: 'pl-item', 'data-confianca': i.confianca },
+            h('div', { class: 'pl-item-texto' }, h('span', { class: 'ali-nome', texto: i.nome }),
+              h('span', { class: 'ali-sub', texto: `${n0(i.macros.kcal)} kcal · ${numeroBr(i.macros.proteina)} g P · ${numeroBr(i.macros.carboidrato)} C · ${numeroBr(i.macros.gordura)} G${i.como ? ` · “${i.como}”` : ''}${i.confianca === 'baixa' ? ' · confira' : ''}` })),
+            h('div', { class: 'pl-item-qtd' },
+              h('button', { class: 'pl-mini', type: 'button', 'aria-label': `Menos ${i.nome}`, onclick: () => mexer(-1) }, icone('menos')),
+              h('span', { class: 'pl-item-valor', texto: textoDaMedida(i.quantidade, i.unidade) }),
+              h('button', { class: 'pl-mini', type: 'button', 'aria-label': `Mais ${i.nome}`, onclick: () => mexer(1) }, icone('mais'))),
+            h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${i.nome}`, onclick: () => { r.itens.splice(k, 1); if (r.itens.length === 0) rev.refeicoes.splice(iR, 1); desenharImp(); } }, icone('fechar')));
+        })),
+        h('div', { class: 'pl-rodape' }, h('span', { class: 'pl-soma', texto: `${n0(soma.kcal)} kcal · ${n0(soma.proteina)} g P` })));
+    });
+    return [
+      h('div', { class: 'cartao pl-total' },
+        h('div', { class: 'meta-linha' }, h('b', { class: 'meta-kcal', texto: n0(total.kcal) }), h('small', { texto: 'kcal no dia' })),
+        h('div', { class: 'meta-macros' }, ...[['Proteína', total.proteina], ['Carbo', total.carboidrato], ['Gordura', total.gordura]].map(([n, v]) => h('span', {}, h('b', { texto: `${n0(v)} g` }), h('small', { texto: n }))))),
+      h('p', { class: 'imp-resumo', texto: `Li ${rev.refeicoes.length} ${rev.refeicoes.length === 1 ? 'refeição' : 'refeições'} e ${nItens} alimentos. Ajuste o que precisar: nada foi salvo ainda.` }),
+      rev.problema ? h('p', { class: 'imp-aviso', texto: `A IA avisou: ${rev.problema}` }) : null,
+      ...cartoes,
+      msg,
+      h('button', { class: 'botao principal cheio imp-salvar', onclick: () => salvar(msg), texto: 'Usar como meu plano' }),
+      h('button', { class: 'botao texto', style: 'margin:8px auto 0;display:block', onclick: () => { est.revisao = null; desenharImp(); }, texto: 'Voltar e ler de novo' }),
+    ].filter(Boolean);
+  }
+
+  desenharImp();
+}
+
 function telaDieta() {
   const { dia, resumo, pesos, plano, perfil } = dietaDeHoje();
   const tela = h('main', { class: 'tela' }, cabeca('Dieta', dataPorExtenso(dia)));
@@ -3314,16 +3638,21 @@ function telaDieta() {
     h('button', { class: 'botao principal cheio dieta-adicionar', type: 'button', onclick: () => escolherAlimento({ modo: 'dia', refeicao: null }) }, icone('mais'), ' Adicionar alimento')));
 
   tela.append(h('div', { class: 'secao-linha' }, h('h2', { class: 'secao', texto: 'Refeições' }),
-    plano.length > 0 ? h('button', { class: 'botao texto secao-acao', type: 'button', onclick: abrirPlanoDieta }, icone('lapis'), ' Editar plano') : null));
+    h('button', { class: 'botao texto secao-acao', type: 'button', onclick: abrirImportarDieta }, icone('ia'), ' Importar'),
+    plano.length > 0 ? h('button', { class: 'botao texto secao-acao', type: 'button', onclick: abrirPlanoDieta }, icone('lapis'), ' Editar') : null));
   if (resumo.refeicoes.length === 0) {
     tela.append(h('section', { class: 'cartao vazio dieta-vazia' },
       h('p', { class: 'dieta-vazia-titulo', texto: 'Monte o seu plano' }),
-      h('p', { class: 'discreto', texto: 'Escolha as refeições do dia e o que vai em cada uma. Os alimentos vêm da tabela, dos seus salvos ou você escreve a tabela nutricional. O mesmo plano vale no computador.' }),
-      h('button', { class: 'botao principal cheio', type: 'button', onclick: abrirPlanoDieta }, icone('mais'), ' Montar plano')));
+      h('p', { class: 'discreto', texto: 'Mande um print, foto ou o texto da sua dieta e a IA monta tudo, com os macros. Ou monte à mão com a tabela TACO. O mesmo plano vale no computador.' }),
+      h('button', { class: 'botao principal cheio', type: 'button', onclick: abrirImportarDieta }, icone('ia'), ' Importar minha dieta com IA'),
+      h('button', { class: 'botao cheio', type: 'button', style: 'margin-top:8px', onclick: abrirPlanoDieta }, icone('mais'), ' Montar à mão')));
   }
   for (const r of resumo.refeicoes) {
     const aberta = refeicaoAberta.has(r.habitoId) || (r.proxima && !refeicaoFechada.has(r.habitoId));
-    const estado = r.feita ? h('span', { class: 'ref-estado feita' }, icone('check'), 'Feita')
+    const parte = r.feita && r.comido.length > 0 ? itensDaRefeicao(r) : null;
+    const comeuParte = parte && parte.itens.some((x) => x.comeu) && parte.itens.some((x) => !x.comeu);
+    const estado = comeuParte ? h('span', { class: 'ref-estado feita parcial' }, icone('check'), `${parte.itens.filter((x) => x.comeu).length} de ${parte.itens.length}`)
+      : r.feita ? h('span', { class: 'ref-estado feita' }, icone('check'), 'Feita')
       : r.pulada ? h('span', { class: 'ref-estado pulada', texto: 'Pulei' })
         : r.proxima ? h('span', { class: 'ref-estado proxima', texto: 'Próxima' })
           : h('span', { class: 'ref-kcal', texto: `${n0(r.totais.kcal)} kcal` });
@@ -3335,32 +3664,7 @@ function telaDieta() {
           desenhar();
         },
       }, h('span', { class: 'ref-hora', texto: r.hora }), h('span', { class: 'ref-titulo', texto: r.titulo }), estado));
-    if (aberta) {
-      const registrado = r.comido.length > 0;
-      const itens = registrado
-        ? r.comido.map((c) => h('li', { class: 'ref-registrado' }, h('span', { texto: c.descricao }), h('span', { texto: `${n0(c.kcal)} kcal` }),
-          h('button', { class: 'pl-mini pl-tirar', type: 'button', 'aria-label': `Tirar ${c.descricao}`, onclick: () => { tirarComida(c); desenhar(); } }, icone('fechar'))))
-        : r.itensComMacros.map((i) => h('li', {}, h('span', { texto: `${i.nome} · ${textoDaMedida(i.quantidade, i.unidade)}` }), h('span', { texto: `${n0(i.calculado.kcal)} kcal` })));
-      cartao.append(h('ul', { class: 'ref-itens' }, itens,
-        h('li', { class: 'ref-total' }, h('span', { texto: registrado ? 'Registrado' : 'Total do plano' }), h('b', { texto: `${n0(r.totais.kcal)} kcal · ${n0(r.totais.proteina)} g P` }))));
-      const marca = (comeu) => mudar((e) => {
-        escrever(e, 'marcas_habito', [r.habitoId, dia], comeu ? { habito_id: r.habitoId, dia_logico: dia, marcado_em: new Date().toISOString() } : null);
-      });
-      const pula = (pulou) => mudar((e) => {
-        escrever(e, 'refeicoes_puladas', [dia, r.habitoId], pulou ? { dia, habito_id: r.habitoId, em: new Date().toISOString() } : null);
-      });
-      const mais = h('button', { class: 'botao', type: 'button', onclick: () => escolherAlimento({ modo: 'dia', refeicao: r.habitoId }) }, icone('mais'), ' Alimento');
-      cartao.append(h('div', { class: 'ref-acoes' },
-        r.feita
-          ? [mais, registrado
-            ? h('button', { class: 'botao', onclick: () => { voltarAoPlano(r, dia); desenhar(); }, texto: 'Voltar ao plano' })
-            : h('button', { class: 'botao', onclick: () => { marca(false); desenhar(); }, texto: 'Desfazer' })]
-          : r.pulada
-            ? h('button', { class: 'botao', onclick: () => { pula(false); desenhar(); }, texto: 'Desfazer "Pulei"' })
-            : [h('button', { class: 'botao principal', onclick: () => { marca(true); refeicaoAberta.delete(r.habitoId); refeicaoFechada.add(r.habitoId); desenhar(); }, texto: 'Comi' }),
-              mais,
-              h('button', { class: 'botao', onclick: () => { pula(true); refeicaoAberta.delete(r.habitoId); refeicaoFechada.add(r.habitoId); desenhar(); }, texto: 'Pulei' })]));
-    }
+    if (aberta) cartao.append(...corpoDaRefeicao(r, dia));
     tela.append(cartao);
   }
 

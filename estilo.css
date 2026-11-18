@@ -1541,3 +1541,53 @@ div.cardio-item { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
 .pl-nome.campo { font-size: 1rem; font-weight: 650; color: var(--texto); }
 .ref-itens { padding-left: 66px; }
 .ref-acoes { padding-left: 14px; }
+
+/* ---------- a refeicao alimento por alimento (17/11/2026) ---------- */
+.ref-resumo { margin: 0; padding: 0 14px 6px; font-size: 0.8rem; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.ref-lista { margin: 0; padding: 0 8px; list-style: none; display: grid; gap: 2px; }
+.ref-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; border-radius: 14px; transition: background-color 0.2s ease; }
+.ref-item[data-comeu="sim"] { background: color-mix(in srgb, var(--tinta) 8%, transparent); }
+.ref-item-toque { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 54px; padding: 6px 6px 6px 8px; text-align: left; background: none; border: 0; color: inherit; cursor: pointer; border-radius: 14px; }
+.ref-item-toque:active { background: var(--cartao-2); }
+.ref-item-fixo { cursor: default; }
+.ref-check { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--sep); color: transparent; transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s ease; }
+.ref-check svg { width: 16px; height: 16px; stroke-width: 3; }
+.ref-item[data-comeu="sim"] .ref-check { background: var(--tinta); border-color: var(--tinta); color: var(--sobre-tinta); }
+.ref-check-mais { background: color-mix(in srgb, var(--ciano) 22%, transparent) !important; border-color: transparent !important; color: var(--ciano) !important; }
+.ref-item-texto { display: grid; min-width: 0; }
+.ref-item-nome { font-size: 0.93rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-item[data-comeu="nao"] .ref-item-nome { color: var(--texto-2); }
+.ref-item-sub { font-size: 0.76rem; color: var(--texto-2); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-item-qtd { display: flex; align-items: center; gap: 2px; margin-right: 6px; padding: 2px; border-radius: 12px; background: var(--cartao-2); }
+.ref-item-qtd .pl-mini { margin: 0; color: var(--tinta); width: 40px; height: 40px; }
+.ref-item-qtd .pl-tirar { color: var(--texto-2); }
+.ref-item[data-toque="sim"] .ref-check { animation: ref-estala 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+.ref-item[data-toque="sim"] .ref-item-sub { animation: ref-numero 0.3s ease-out; }
+@keyframes ref-estala { 0% { transform: scale(0.7); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+@keyframes ref-numero { from { opacity: 0.2; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.refeicao .ref-acoes { flex-wrap: wrap; }
+.ref-estado.parcial { color: var(--laranja); background: color-mix(in srgb, var(--laranja) 14%, transparent); }
+@media (prefers-reduced-motion: reduce) { .ref-item[data-toque="sim"] .ref-check, .ref-item[data-toque="sim"] .ref-item-sub { animation: none; } }
+
+/* ---------- a IA na busca e no alimento proprio ---------- */
+.ali-ia svg { grid-row: span 2; }
+.ali-ia small { grid-column: 2; color: var(--texto-2); font-size: 0.76rem; font-weight: 500; }
+.ali-ia-sem { color: var(--texto); background: var(--cartao); }
+.ali-ia-sem svg { color: var(--texto-2); }
+.ali-ia-atalhos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ali-ia-atalho { position: relative; display: grid; justify-items: center; gap: 4px; min-height: 76px; padding: 10px 8px; border-radius: 16px; text-align: center; background: color-mix(in srgb, var(--tinta) 10%, var(--cartao-2)); color: var(--texto); border: 0; cursor: pointer; }
+.ali-ia-atalho svg { width: 22px; height: 22px; color: var(--tinta); }
+.ali-ia-atalho span { display: grid; gap: 1px; }
+.ali-ia-atalho b { font-size: 0.86rem; }
+.ali-ia-atalho small { font-size: 0.72rem; color: var(--texto-2); }
+.ali-ia-atalho[disabled], .ali-ia-atalho:has(input[disabled]) { opacity: 0.6; }
+.ali-ia-atalho[data-lendo="sim"] { opacity: 1; box-shadow: inset 0 0 0 1.5px var(--tinta); }
+.ali-ia-lendo { display: flex !important; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600; }
+.ali-ia-ok { margin: 0; font-size: 0.82rem; color: var(--tinta); }
+.pl-importar { margin: 0; }
+.imp-refeicao .pl-item[data-confianca="baixa"] { box-shadow: inset 3px 0 0 var(--laranja); padding-left: 6px; }
+.imp-refeicao .imp-nota-dia { padding: 0 2px; }
+.folha-importar-dieta .pl-total { margin-bottom: 4px; }
+.ref-item-valor { min-width: 4.4ch; text-align: center; font-size: 0.8rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ref-item-valor[data-mudou="sim"] { color: var(--laranja); }
+.refeicao .ref-acoes .botao { white-space: nowrap; min-width: 0; }
